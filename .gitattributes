@@ -1,0 +1,10 @@
+# This repository is a historical archive: every file must round-trip
+# byte-for-byte. Disable ALL end-of-line conversion.
+#
+# Why it matters here:
+#   - PLINKC.asm is Shift-JIS with CR-ONLY line endings (the A62 assembler
+#     requires them); any CRLF/LF normalization would corrupt it.
+#   - README.DOC / APLINKS.DOC / PLINKC.DOC carry their own encodings
+#     (UTF-8 or Shift-JIS) with CRLF.
+#   - PLINKC.OBJ and the .exe/.dll files are binaries.
+* -text

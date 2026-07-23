@@ -1,0 +1,125 @@
+==============================================================================
+
+              "PLINKC" - Pilote de périphérique pour le cache Pocket Link version 1.60
+
+                           pour la série PC-E500 / 1480U
+
+                        (C) 1996-1997 Daisuke Mizobata
+                             (c) 1990, 93, 94 N.Kon
+                              Tous droits réservés
+
+==============================================================================
+
+"PLINKC" n'est pas un programme au sens vrai du terme, avec lequel une donnée entre
+un PC et un ordinateur de poche SHARP (PC-E500 (s) / PC-1480U)
+peut. "PLINKC" est plutôt un pilote de périphérique pour le lecteur virtuel "L:".
+Si le pilote est installé, le lecteur peut fonctionner exactement comme les autres (E: /
+F: / G: / S1: / S2: / S3 :) sont adressés!
+-------------------------------------------------- ----------------------------
+
+INSTALLATION:
+
+Avant que le fichier BASIC "PLINKC.BAS" puisse être démarré (avec RUN)
+Assurez-vous qu'au moins 3072 octets (plage ML) sont réservés
+sont!
+Si ce n'est pas le cas: voici la procédure à & C00 (3072)
+Pour réserver des octets:
+
+  POKE & BFE03, & 1A, & FD, & B, 0, & C, 0
+  CALL & FFFD8
+
+(L'ordinateur de poche sera initialisé avec la commande CALL!)
+  PAS détruit! )
+
+     ! Le programme d'installation du pilote (ML) utilise l'espace mémoire de
+     ! & BF000 ~ & BF5FF. Il peut commencer par le "PLINKC.BAS" avec le
+     ! Commande SAVEM "E: PLINKC.ML", & BF000, & BF5FF
+     ! être déposé sur le disque virtuel "E:". Ce fichier existe-t-il déjà, alors
+     ! l'installation se fait avec LOADM "E: PLINKC.ML": CALL & BF000
+
+Une fois l'installation réussie, le message doit apparaître à l'écran.
+
+  PLINKC ver 1.61 de Daisuke Mizobata
+  basé sur PLINK ver 1.04 par N.Kon
+  Installé.
+  >
+
+apparaissent. Après les fichiers "S1:" doit être le fichier suivant (le pilote)
+
+  PLINK .SYS P 2284
+
+apparaissent dans la liste des fichiers.
+
+Si au lieu de "Installé". l'un des messages suivants à l'écran
+est apparu, l'installation n'a PAS réussi:
+
+"Pas assez de mémoire." : Il n'y avait pas assez d'espace libre
+                       Disponible. - Peut-être que votre disque virtuel "E:" est trop gros,
+                       ou les variables prennent trop de place dans
+                       Revendication. Après CLEAR [Entrée], essayez-en un
+                       Restart by CALL & BF000 [Enter] (aussi avec NEW
+                       [Enter] vous procurera de la mémoire supplémentaire).
+"Existe déjà." : Le pilote de périphérique est déjà dans le classeur.
+                       Si PLINKC ne fonctionne pas correctement maintenant
+                       Retirez le pilote 'à la main' et
+                       enfin réinstaller. Cela arrive
+                       ainsi: SET "S1: PLINK.SYS", "" [Enter].
+                       Et ensuite: KILL "S1: PLINK.SYS" [Entrée].
+                       Maintenant, une réinitialisation [ON] doit être effectuée!
+"Plus de deux pages." : D'autres pilotes de périphériques empêchent la réussite
+                       Installation! Supprimer ces (tous les fichiers * .SYS)
+                       schéma ci-dessus et installez-le
+                       encore dans un ordre différent!
+
+Si l'installation a réussi, vous devez prendre en compte les paramètres de transmission.
+configurer l'interface série:
+
+  OPEN "9600, N, 8,1, A ,,, N": CLOSE
+
+-------------------------------------------------- ----------------------------
+
+POUR TRAVAILLER AVEC "PLINKC", UN LOGICIEL SERVEUR CORRESPONDANT DOIT ÊTRE OUVERT
+VOTRE PC INSTALLÉ. CECI PEUT, PAR EXEMPLE ÊTRE "APLINKSW32".
+
+-------------------------------------------------- ----------------------------
+
+OPERATION:
+
+L'initialisation se fait à l'aide de la commande INIT (BASIC):
+
+  INIT "L:" Initialise certains paramètres système du pilote
+  INIT "L: I" Initialise certains paramètres système du pilote?
+
+Les commandes suivantes nécessitent le réglage "Connecté" sur le PC:
+
+  INIT "L: D" interrompt la connexion (déconnecte)
+
+  INIT "L: 5" configure un disque (virtuel) de 512 Ko
+  INIT "L: 1" configure un disque (virtuel) de 128 Ko
+
+              Ces commandes doivent être impérativement IMPERATIVES avant utilisation
+              être, sinon le PC u.U. un autre système de fichiers utilisé!
+              Synchroniser la taille du disque virtuel
+              l'utilisation entre le PC et le Pocket!
+
+Toutes les commandes BASIC pour la gestion des fichiers sont disponibles!
+
+Exemples:
+
+  COPY "E: *. *" TO "L:"
+
+  SAVE "L: SQUARE.BAS"
+
+  FILES "L:"
+
+  SET "L: TEST.BAS", ""
+
+  COPY "S1: RAMFILE" À "L:"
+
+  SAVEM "L: PLINKC.ML", & BF000, & BF5FF
+
+  LOAD "L: REGISTER.BAS"
+
+-------------------------------------------------- ----------------------------
+
+

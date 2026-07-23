@@ -1,0 +1,397 @@
+??????????????"PLINKC" - Pilote de p?riph?rique pour le cache Pocket Link version 1.60
+
+???????????????????????????pour la s?rie PC-E500 / 1480U
+
+????????????????????????(C) 1996-1997 Daisuke Mizobata
+?????????????????????????????(c) 1990, 93, 94 N. Kon
+??????????????????????????????Tous droits r?serv?s
+
+===================================================================
+
+Il s’agit d’un pilote de p?riph?rique pour l’ordinateur de poche s?rie PC-E 500 d’un syst?me de ? lien de poche cr?? par M. Pr?s d’un adulte.
+Sur la base de la version 1.04 de PLINK.SYS des adultes proches, nous avons augment? la capacit? de la m?moire cache ? 8 secteurs pour acc?l?rer la lecture et l’?criture. De m?me, si l'ordinateur personnel le prend en charge, vous pouvez ?galement utiliser "L:" avec une capacit? de 512 Ko (g?n?ralement de 128 Ko).
+
+
+★ ☆ Syst?me Pocket Link ☆ ★
+
+Pocket ? Link est un outil d’?change de donn?es entre Pocket Computer et PC, annonc? dans le num?ro de juin 1990 du magazine Pocket Computer ? Journal.
+
+Le lien de poche connecte l’ordinateur de poche au PC via une communication s?rie, cr?e virtuellement un disque de l’ordinateur de poche c?t? PC, le d?finit comme lecteur de "L:" ? partir de l’ordinateur de poche et le fichier RAM "E:" ou "F C'est un syst?me qui peut ?changer des donn?es entre un Pocket PC et un PC en les traitant de la m?me mani?re que ":".
+
+Il existe deux types de serveurs c?t? PC: "PLINKM" et "APLINKS". Dans le premier "PLINKM" annonc?, traitez le "L:" situ? sur le c?t? du Pocket PC comme un fichier unique (lecteur class?) du c?t? PC et utilisez un autre programme pour charger et d?charger des fichiers dans le lecteur class?. C'est en train de devenir.
+Dans cette m?thode, ?tant donn? que le fichier c?t? ordinateur de poche devient un fichier sur l’ordinateur personnel, il est possible d’emp?cher la dissipation du fichier, mais il ?tait difficile d’?changer fr?quemment des fichiers avec le PC. En cons?quence, un autre programme serveur appel? "APLINKS" a ?t? annonc? ult?rieurement. Avec APLINKS, "L:" c?t? ordinateur de poche est cr?? dans la RAM du PC et les fichiers sont entr?s et sortis au moment du d?marrage et de la sortie, de sorte que l'?change de fichiers avec le PC devient tr?s facile.
+
+D'autre part, le programme client c?t? Pocket PC est cr?? sous la forme d'un pilote de p?riph?rique. Etant donn? que le bloc m?moire qui n’interf?re pas avec les autres programmes de l’autre programme est r?serv? dans la RAM du Pocket PC et qu’il r?side, "L:" peut ?tre utilis? dans le m?me sens que l’utilisation du fichier RAM g?n?ralement du programme BASIC ou du programme en langage machine.
+Ce programme est un programme client du c?t? de l'ordinateur de poche.
+
+
+★ environment Environnement d'exploitation ☆ ★
+
+Pour utiliser le syst?me Pocket Link, vous avez besoin, en plus de ce programme, d'un ordinateur personnel sur lequel le programme serveur est install? et d'un convertisseur de niveau qui connecte l'ordinateur de poche ? l'ordinateur.
+Pour les convertisseurs de niveau authentiques SHARP, il est possible de choisir entre CE-130T / 135T / 140T. CE-130T n?cessite un c?ble s?par?, CE-135T a un Mini DIN 8P, CE-140T a un connecteur D-SUB 25P. Veuillez choisir celui qui convient.
+
+
+★ M?thode d'installation ☆ ★
+
+Si vous avez d?j? install? PLINK.SYS, r?initialisez tout et supprimez "PLINK.SYS".
+
+Ce programme est un pilote de p?riph?rique qui r?side dans "S1:" et aucun programme en langage machine n’est requis pour l’utiliser. Cependant, ?tant donn? que le programme d'installation qui le rend r?sident est ?crit en langage machine, pour l'ex?cuter, $ BF000 ~ doit ?tre un domaine en langage machine.
+Par exemple
+
+??POKE & BFE03, & 1A, & FD, & B, 0, & C, 0
+??CALL & FFFD 8
+
+Ensuite, $ BF000 ~ devient la zone de langage de la machine.
+
+Et, si le transfert binaire peut ?tre effectu? d’une mani?re ou d’une autre, transf?rez PLINKC vers le Pocket PC,
+
+??LOADM "PLINKC": CALL & BF000
+
+Si vous ne disposez pas d'un programme de transfert binaire, veuillez transf?rer PLINKC.BAS ? l'aide du logiciel de communication PC et de la commande POKEN LOAD. Ce programme ?crit le programme en langage machine qui rend PLINKC r?sident ? l’aide de l’instruction BASIC et l’ex?cute. Lorsque vous l’ex?cutez, le pilote de p?riph?rique est automatiquement r?sident.
+
+S'il peut r?sider normalement, "Install?" sera affich? et si FILES "S1:" est d?fini,
+
+??PLINK. SYS P 2284
+
+Je re?ois un message disant.
+
+S'il ne peut pas r?sider, un message d'erreur sera ?mis. Am?liorez l'environnement de mani?re appropri?e. La signification du message d'erreur est la suivante.
+
+Pas assez de m?moire.
+L'emplacement m?moire n'a pas assez d'espace libre.
+
+? Existe d?j?.
+"PLINK.SYS" existe d?j?.
+
+? Plus de deux pages.
+Comme le bloc de m?moire d?passe la limite de 64 Ko, il ne peut pas ?tre install?.
+
+Une fois l'installation r?ussie, la zone linguistique de la machine et le programme BASIC ne sont plus n?cessaires. Si "PLINK.SYS" a disparu pour une raison quelconque, proc?dez ? nouveau de la m?me mani?re.
+Si vous transf?rez PLINKC ? l'aide du syst?me Pocket Link, vous pouvez le r?installer simplement en chargeant et en ex?cutant PLINKC.
+
+
+★ ☆ D?finition des conditions de communication ☆ ★
+
+Avant de l'utiliser, veuillez d?finir les conditions de communication s?rie sur le Pocket PC et le PC. Les donn?es peuvent ?tre ?chang?es entre Pocket PC et PC afin que toutes les donn?es exprim?es en 8 bits puissent ?tre transmises.
+
+Les param?tres recommand?s sont les suivants:
+
+Vitesse de communication ... 9600 bps ou plus
+Parit? ... Aucune
+Bit de donn?es ... 8 bits
+Stop bit ... 1 bit
+X control ... Aucun
+
+C'est. Le r?glage du c?t? ordinateur de poche est de BASIC
+
+??OPEN "9600, N, 8, 1, A ,,, N": CLOSE
+
+S'il vous plait
+D'autres r?glages sont ?galement possibles, mais le bit de donn?es du c?t? du Pocket PC est automatiquement d?fini sur 8 bits. R?glez donc le bit de donn?es sur 8 bits. De plus, ?tant donn? que le r?glage du contr?le X du c?t? du PC de poche est ignor?, veuillez r?gler le contr?le "X" du c?t? du PC sur "Aucun".
+
+
+★ ☆ Utilisation ☆ ★
+
+En d?marrant le programme serveur c?t? PC, vous pouvez utiliser les commandes COPY, SAVE, LOAD telles que "E:" ou "F:". Par exemple
+
+??LOAD "L: TEST"
+??SAVEM "L: TEST.BIN", & BE000, & BF 7 FF
+??FILES "L:"
+
+Vous pouvez ex?cuter des commandes telles que.
+
+
+★ method M?thode de terminaison ☆ ★
+
+Avec le syst?me de liaison de poche, il n’est pas n?cessaire d’utiliser le pilote de p?riph?rique situ? sur le c?t? du Pocket PC, tel que "Terminer". Cependant, le serveur c?t? PC ne peut pas ?tre mis hors tension ? moins qu'il ne soit termin? et certains serveurs ne peuvent effectuer d'autres t?ches en fonction du serveur. Par cons?quent, afin de terminer le programme serveur c?t? ordinateur personnel,
+
+??INIT "L: D"
+
+S'il vous pla?t entrer.
+
+
+★ ☆ En cas d'anomalie ★
+
+Si vous utilisez normalement, des anomalies sont peu susceptibles de se produire, mais la communication peut ne pas aboutir ? cause de certaines circonstances. De ce point, Pokekon
+
+??INIT "L: I"
+
+S'il vous pla?t essayez d'entrer. Si le serveur r?agit normalement apr?s l'utilisation de "L:", v?rifiez l'?tat de "L:" ? l'aide de l'outil pour v?rifier le contenu du p?riph?rique bloc et relancez l'op?ration.
+Si le serveur ne r?pond pas, fermez-le de force avec Reset, etc., et le c?t? de l'ordinateur de poche aussi
+
+??INIT "L:"
+
+Assurez-vous qu'il n'est pas connect? au serveur en tant que. Ce qui arrive ? "L:" trait? ? ce moment d?pend du serveur que vous utilisez. M?me si vous pouvez g?rer le "L:" qui a ?t? trait? ? nouveau ? ce moment-l?, il est possible que le contenu ait ?t? d?truit, veuillez donc v?rifier l'?tat de "L:" et l'utiliser.
+Si possible, il vaut mieux abandonner "L:" en cas d'anomalie.
+
+
+★ mode Mode 512 Ko utilis? ☆ ★
+
+APLINKS pour Win 32 ((c) Y. Akagawa), un autre APLINKS pour Macintosh ((c) Nihondo) est dot? du mode 512 Ko. PLINKC peut ?galement utiliser ce mode.
+Par d?faut, il est en mode standard de 128 Ko et vous pouvez utiliser le programme de serveur PLINK conventionnel.
+
+??INIT "L: 5"
+
+Si vous le faites, le mode 512 Ko sera d?fini.
+
+??INIT "L: 1"
+
+Ensuite, il revient au mode 128 Ko.
+Veuillez cr?er le m?me mode du c?t? PC et du c?t? poche. Lorsque le serveur c?t? PC prend en charge la commutation automatique, il ne peut basculer entre 128 Ko et 512 Ko c?t? PC qu'en utilisant l'ordinateur de poche.
+
+
+★ ☆ Point d'attention ☆ ★
+
+Pour arr?ter le programme serveur du PC, ex?cutez INIT "L: D" ou une op?ration ?quivalente et quittez le programme "du c?t? du Pocket PC". Si vous arr?tez avec le fonctionnement de l'ordinateur personnel, il y a une discordance entre les donn?es c?t? PC et les donn?es mises en cache par le Pocket PC lors du d?marrage du programme serveur suivant, d?truisant les donn?es de "L:", Je vais faire un comportement inattendu.
+Entrez INIT "L:" pour effacer le cache de l'ordinateur de poche, m?me si vous avez mis le serveur hors service, sauf en raison du fonctionnement de l'ordinateur de poche.
+
+?tant donn? que le pilote de p?riph?rique du Pocket PC r?side de mani?re particuli?re, ne supprimez pas le fichier situ? devant le pilote de p?riph?rique et ne s?curisez pas le fichier RAMFILE dans l'emplacement o? se trouve le pilote de p?riph?rique. Cela fait s?rement fuir. En outre, lors de la suppression de PLINK.SYS, veillez ? r?initialiser tous les param?tres de r?initialisation et ? utiliser "L:" afin que l'erreur "Nom de lecteur incorrect" s'affiche.
+Si vous avez d?j? utilis? le pilote de p?riph?rique, suivez les pr?cautions d'utilisation des pilotes de p?riph?rique g?n?raux.
+
+
+★ ☆ ? propos du programme ☆ ★
+
+?tant donn? que le syst?me de liaison de poche est reconnu comme un p?riph?rique bloc, l'acc?s ? la FAT et au r?pertoire a lieu et la vitesse d'acc?s est in?vitable. Ainsi, m?me avec le PLINK d'origine, j'essaie d'acc?l?rer la pr?paration d'un cache du c?t? de l'ordinateur de poche, mais un seul secteur du cache est pr?par?. Un acc?s inutile a donc eu lieu.
+
+Dans ce "PLINKC", la capacit? de cache est augment?e ? 8 secteurs, 7 secteurs pour le r?pertoire FAT /, 1 secteur pour la zone de donn?es. A chaque fois qu’un secteur est acc?d?, si son contenu est ?crit dans le cache et que le m?me secteur est acc?d? la fois suivante, le cache
+
+
+
+
+
+==============================================================================
+
+              "PLINKC" - Pocket Link Cache Device Driver ver 1.60
+
+                           for PC-E500/1480U series
+
+                        (C) 1996-1997 Daisuke Mizobata
+                             (c) 1990,93,94 N.Kon
+                              All rights reserved
+
+==============================================================================
+
+　近成人氏が作成されたポケット・リンク・システムの、PC-E500シリーズポケコン用のデバイスドライバです。
+　近成人氏のPLINK.SYS ver 1.04をベースに、キャッシュ容量を8セクタに増やして読み書きの高速化を図りました。また、パソコン側が対応していれば、512KBの容量（普通は128KB）を持つ"L:"を使うこともできます。
+
+
+★☆　ポケット・リンク・システムとは　☆★
+
+　ポケット・リンクはポケコン・ジャーナル誌の1990年6月号で発表された、ポケコンとパソコンのデータのやり取りを行なうツールです。
+
+　ポケット・リンクは、ポケコンとパソコンをシリアル通信で接続し、パソコン側に仮想的にポケコンのディスクを作成し、ポケコンからはそれを"L:"というドライブとして、RAMファイル"E:"や"F:"と同じように扱うことでポケコンとパソコンのデータ交換ができるというシステムです。
+
+　パソコン側のサーバーには"PLINKM"と"APLINKS"の2種類があります。最初に発表された"PLINKM"では、ポケコン側の"L:"をパソコン側では1つのファイル（filed-drive）として扱い、filed-driveのなかのファイルの出し入れには別のプログラムを利用するようになっています。
+　この方式では、ポケコン側のファイルがパソコンでは1つのファイルになるため、ファイルの散逸を防ぐことができますが、頻繁にパソコンとファイルのやり取りをするには大変でした。そのため後に、"APLINKS"という別のサーバープログラムが発表されました。APLINKSでは、ポケコン側の"L:"をパソコンのRAMに作成し、起動時と終了時にファイルの出し入れを行なうため、パソコンとのファイルのやり取りが非常に簡単になりました。
+
+　一方、ポケコン側のクライアント・プログラムはデバイス・ドライバという形で作成されています。ポケコンのRAMに他のプログラムから干渉されないメモリブロックを確保して、常駐するため、BASICプログラムやマシン語プログラムから普段RAMファイルを使うのと同じ感覚で"L:"を使うことができます。
+　このプログラムは、そのポケコン側のクライアント・プログラムです。
+
+
+★☆　動作環境　☆★
+
+　ポケット・リンク・システムを使用するには、このプログラムのほかに、サーバーのプログラムがインストールされたパソコンと、ポケコンとパソコンをつなぐレベルコンバーターが必要です。
+　レベルコンバーターは、SHARP純正の場合、CE-130T/135T/140Tのいずれでも可能です。CE-130Tは別にケーブルが必要で、CE-135TはMini DIN 8P、CE-140TはD-SUB 25Pコネクタを持ちます。各自適当なものを選択してください。
+
+
+★☆　インストール方法　☆★
+
+　既にPLINK.SYSをインストールしている方は、All resetして"PLINK.SYS"を削除してください。
+
+　このプログラムは"S1:"に常駐するデバイスドライバで、使用するときにマシン語プログラムは必要ありません。しかし、常駐させるためのインストーラーはマシン語で書かれているので、これを実行するためには$BF000～がマシン語領域となっている必要があります。
+　例えば、
+
+  POKE &BFE03,&1A,&FD,&B,0,&C,0
+  CALL &FFFD8
+
+　とすると、$BF000～がマシン語領域にになります。
+
+　そして、何らかの方法でバイナリ転送ができる場合は、PLINKCをポケコンに転送して、
+
+  LOADM "PLINKC":CALL &BF000
+
+　としてください。
+　もしバイナリ転送用のプログラムを持っていない場合は、PLINKC.BASをパソコンの通信ソフトとポケコンのLOADコマンドを使うなどして転送してください。このプログラムは、PLINKCを常駐させるマシン語プログラムをBASICの命令を使って書き込んで実行するもので、RUNすると自動的にデバイスドライバが常駐されます。
+
+　正常に常駐できた場合、"Installed."と表示され、FILES "S1:"とすると、
+
+  PLINK   .SYS P     2284
+
+　という表示が出ます。
+
+　常駐できなかった場合、エラーメッセージが出るので、適当に環境の改善を行なってください。エラーメッセージの意味は、次の通りです。
+
+・Not enough memory.
+　メモリスロットの空き容量が足りない。
+
+・Already exists.
+　"PLINK.SYS"が既に存在している。
+
+・Over two pages.
+　メモリブロックが64KB境界をまたいでしまうので、インストールできない。
+
+　インストールに成功したらマシン語領域もBASICプログラムも必要ありません。何らかの理由で"PLINK.SYS"が消えてしまった場合、再び同じ操作を行なってください。
+　なお、ポケット・リンク・システムを使ってPLINKCを転送しておけば、PLINKCをロードして実行するだけで再びインストールできます。
+
+
+★☆　通信条件の設定　☆★
+
+　使用する前に、ポケコンとパソコンの両方でシリアル通信条件の設定を行なっておいてください。ポケコンとパソコンの双方でデーターのやり取りが行なえるようになっていて、8ビットで表わせる全てのデーターを透過できるようにしてください。
+
+　推奨する設定は、
+
+　通信速度          …9600bps以上
+　パリティ          …なし
+　データビット      …8ビット
+　ストップビット    …1ビット
+　X制御             …なし
+
+　です。ポケコン側の設定は、BASICから
+
+  OPEN "9600,N,8,1,A,,,N":CLOSE
+
+　としてください。
+　これ以外の設定も可能ですが、ポケコン側のデータビットは自動的に8ビットに設定されますので、データビットは8ビットに設定してください。また、ポケコン側のX制御の設定は無視されますのでパソコン側のX制御は“なし”にしてください。
+
+
+★☆　使い方　☆★
+
+　パソコン側のサーバープログラムを開始させれば、"E:"や"F:"に使うようにCOPYやSAVE、LOADといったコマンドを使うことができます。例えば、
+
+  LOAD "L:TEST"
+  SAVEM "L:TEST.BIN",&BE000,&BF7FF
+  FILES "L:"
+
+　といったコマンドが実行できます。
+
+
+★☆　終了方法　☆★
+
+　ポケット・リンク・システムでは、ポケコン側のデバイスドライバは特に「終了」といった操作をする必要はありません。しかし、パソコン側サーバーは終了させなければ電源も落とすことはできませんし、サーバーによっては他の作業ができないものもあります。そこで、パソコン側のサーバープログラムを終了させるには、ポケコンから、
+
+  INIT "L:D"
+
+　と入力してください。
+
+
+★☆　異常が発生したとき　☆★
+
+　普通に使っているなら、異常が起こることはまずないのですが、何らかの事態によって通信がうまくいかなくなるかもしれません。こうなったらポケコンから
+
+  INIT "L:I"
+
+　と入力してみてください。その後"L:"を操作してサーバーが正常に反応する場合は、ブロックデバイスの内容をチェックするツールを使って"L:"の状態を確かめてから動作を再開してください。
+　もしサーバーが反応しない場合、サーバーをResetなどによって強制終了させ、ポケコン側も
+
+  INIT "L:"
+
+　としてサーバーに接続していない状態にします。このとき扱っていた"L:"がどうなるかは、使用しているサーバーによって異なります。そのとき扱っていた"L:"を再び扱える場合でも、中味が破壊されている可能性があるので、"L:"の状態を確かめて使用するようにしてください。
+　できれば、異常が起こったときの"L:"は破棄したほうが無難です。
+
+
+★☆　512KBモードの使用　☆★
+
+　APLINKS for Win32（(c)Y.Akagawa）、Another APLINKS for Macintosh（(c)Nihondo）には、512KBモードがあります。PLINKCでもこのモードを使用することができます。
+　デフォルトでは標準の128KBモードになっていて、従来のPLINKサーバープログラムが使用できるようになっています。
+
+  INIT "L:5"
+
+　とすると、512KBモードになります。
+
+  INIT "L:1"
+
+　とすると、128KBモードに戻ります。
+　パソコン側とポケコン側のモードは同じにしてください。パソコン側のサーバーが自動切り換えに対応している場合、ポケコンの操作だけでパソコン側の128KB⇔512KBの切り換えができます。
+
+
+★☆　注意点　☆★
+
+　パソコンのサーバープログラムを停止する場合、INIT "L:D"またはこれに相当する操作を行なって「ポケコン側から」終了してください。もしパソコン側の操作で終了させると、次回サーバープログラムを起動したさいにパソコン側のデーターとポケコン側がキャッシュしているデーターとの間で不一致が起こって、"L:"のデーターを破壊したり、予期せぬ動作をしたりします。
+　もしポケコン側の操作以外でサーバーを終了してしまった場合でも、INIT "L:"と入力してポケコンのキャッシュをクリアしてください。
+
+　ポケコンのデバイスドライバは特殊な方法で常駐しているので、デバイスドライバの前にあるファイルを削除したり、デバイスドライバの存在するスロットにRAMFILEを確保したりしないでください。確実に暴走します。また、PLINK.SYSを削除するときは、All Resetしたりして"L:"を操作すると"Bad drive name"エラーが出る状態にして行なってください。
+　すでにデバイスドライバを使ったことがある人は、一般のデバイスドライバを使うときの注意に従ってください。
+
+
+★☆　プログラムについて　☆★
+
+　ポケット・リンク・システムはブロック・デバイスとして認識されるため、FATやディレクトリへのアクセスが生じてアクセス速度の低下は避けられません。そこで、オリジナルのPLINKでも、ポケコン側にキャッシュを用意して高速化しようとしているのですが、キャッシュが1セクタ分しか用意されておらず、無駄なアクセスが発生していました。
+
+　この"PLINKC"では、キャッシュ容量を8セクタに増やし、7セクタをFAT・ディレクトリ用に、1セクタをデータエリア用にしています。セクタにアクセスする度に、キャッシュにセクタの内容を書き込んでおいて、次回同じセクタをアクセスすると、キャッシュからのアクセスになるので高速になります。
+　キャッシュが一杯になってしまった場合は、最長時間未使用（LRU）のセクタを捨てて、そこに新しいセクタの内容を書き込みます。キャッシュしているセクタはリストで管理されていて、セクタにアクセスするとそのセクタがリストの先頭に移動するようになっているため、使用されないリストは後ろのほうに集まるようになっています。
+
+　キャッシュするセクタ数は、ソースリストのラベル"n_fcache"と"n_dcache"の値を変更することで変更できます。無闇にセクタ数を増やしても、それに見合うだけ高速化されるというわけではありません。転送する最大バイト数によって、最適なセクタ数は変わります。
+　また、データエリア用のキャッシュの大きさは、大きくしてもあまり意味がありません。なぜなら、通常のポケット・リンクの使い方では、同じファイルに何度もアクセスするということはあまりないからです。
+
+　キャッシュからのアクセスを行なうのは読み込み時だけです。セクタに書き込むときは、キャッシュの内容を更新すると同時に、実際にサーバーへの転送を行ないます。これをサーバーへの転送はキャッシュ内容を捨てるときと、INIT "L:D"のときだけにすると、さらに高速化されます。実際オリジナルのPLINK ver 1.04ではそうなっているのですが、いろいろな理由から書き込み時はキャッシュしないようにしています。
+
+　キャッシュアクセス方式が変わっているほかは、オリジナルのPLINK ver 1.04と変わりません。常駐するメモリブロック名も、変えてありません。
+
+　512KB対応は、メディアパラメタブロック(MPB)を切り換えているだけです。ソースリストを見ればお分かりになると思いますが、128KBの時はmpb128を、512KBのときはmpb512を使います。
+　自動でパソコン側の容量を切り換えられるように、INIT "L:1"のときは'S1' ($53,$31)を、INIT "L:5"のときは'S5' ($53,$35)をパソコンに送ります。
+
+
+★☆　ベンチマーク　☆★
+
+　一口に「高速化」といっても実際どのくらい速くなっているのか。実験を行なってみました。
+
+クライアント側：
+マシン    ：PC-E550(標準クロック)
+プログラム：PLINKC ver 1.5
+            PLINK ver 1.04
+            HMFiler ver 2.10（(c)Him氏）
+            （マシン語領域は$B0000～で使用）
+
+サーバー側：
+マシン    ：Macintosh LC475(CPU 68LC040/25MHz)
+プログラム：APLINKS for Mac Release 0.3
+
+通信ケーブル：CE-135T
+通信速度    ：19200bps
+
+　ファイルの位置による誤差が出ないように、"L:"と"E:"は、必要なファイル以外はなにも入れていない状態でテストしています。また、キャッシュの影響をなくすため、転送前に"L:"のDisconnectを行なっています。
+
+●その１
+　SCRNJPN.FNT（58784バイト）をBASICとHMFの両方で転送し、時間を計測しました。
+
+             "E:"->"L:"                "L:"->"E:"
+        ｷｬｯｼｭ無し   ｷｬｯｼｭあり     ｷｬｯｼｭ無し   ｷｬｯｼｭあり
+BASIC    3分42秒     1分51秒       1分10秒    1分11秒
+HMF      1分17秒     1分14秒       1分10秒    1分11秒
+
+●その２
+　"F:"の全てのファイル（22個、単純合計で56597バイト）を"L:"に転送し、一旦Disconnectしてから"L:"から"E:"に転送しました。
+
+             "F:"->"L:"                "L:"->"E:"
+        ｷｬｯｼｭ無し   ｷｬｯｼｭあり     ｷｬｯｼｭ無し   ｷｬｯｼｭあり
+BASIC    4分21秒     2分22秒       1分31秒    1分20秒
+HMF      2分28秒     1分51秒       1分29秒    1分19秒
+
+●その３
+　「その２」の"F:"の、先頭の10個のファイル（28383バイト）のみを転送。
+
+             "F:"->"L:"                "L:"->"E:"
+        ｷｬｯｼｭ無し   ｷｬｯｼｭあり     ｷｬｯｼｭ無し   ｷｬｯｼｭあり
+HMF      1分00秒     0分49秒       0分40秒    0分37秒
+
+
+　これで見ると、"L:"への転送、特にBASICでの高速化が顕著であることが分かります。これは、BASICではファイルを短いブロック単位で読み出すため、無駄なFATの読み出しが多いためと思われます。
+　それに対して、"L:"からの転送では、複数のファイルを転送するときに若干高速化されているのみです。これは、"L:"からの単一ファイルの転送についてはもともと無駄なアクセスがないこと、複数ファイルを転送する際にはFATやディレクトリを何度も読み出すことが原因でしょう。
+
+
+★☆　最後に　☆★
+
+　このプログラムを公開するにあたって、改造版の公開を快諾してくださった原作者の近成人氏と、APLINKS for Win32の512KBモードについて教えてくださった赤川裕一(Rev)さんに感謝します。
+　また、このドキュメントは、原作のドキュメントを大幅に参考とさせていただきましたことをおわびいたします。
+
+
+★☆　参考文献　☆★
+
+1)近　成人：PLINK ver 1.04
+2)近　成人：ポケット・リンク、ポケコン・ジャーナル1990年 6月号、工学社
+3)清川  純：APLINKS for Mac Release 0.3
+4)近　成人：MAKEBAS ver 1.01
+5)PC-E550＊1490U][活用研究、工学社
+6)赤川裕一：PLINK.SYS 512KB対応パッチ ver 0.02
+7)きゃぱ：DS ver 1.1
+8)Nihondo：Another Aplinks for Macintosh Ver 1.1.1

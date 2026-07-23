@@ -1,0 +1,20 @@
+# Local Claude Code settings (machine-specific)
+.claude/settings.local.json
+
+# Personal virtual-disk folders (own Sharp programs, not part of the project)
+APLINKS/v1.03/Disk1/
+APLINKS/v1.03/Disk2/
+APLINKS/v1.03/Disk3/
+
+# Test / working artifacts
+APLINKS/v1.03/eval.txt
+APLINKS/v1.03/TEST.BAS
+APLINKS/v1.03/TEST2.BAS
+APLINKS/v1.03/init.bas
+
+# Office lock & temp files
+~$*
+*.tmp
+
+# C object files (the Windows .exe and PLINKC.OBJ are committed on purpose)
+*.o
