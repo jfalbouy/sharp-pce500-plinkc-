@@ -138,6 +138,28 @@ recharge le dossier-disque et **reste prêt** pour une nouvelle connexion. Pour 
 
 - **Ctrl-D** dans la console → écrit les fichiers puis quitte.
 - **Ctrl-C** → quitte immédiatement, **sans** écrire les fichiers.
+- **`h`** → affiche l'historique de la session (voir plus bas), sans rien interrompre.
+
+### Historique de session
+
+Le serveur tient un **journal des actions** de la session (démarrage, fichiers préchargés,
+nombre de lectures/écritures par connexion, fichiers sauvegardés, déconnexions). Il est :
+
+- **consultable à tout moment** en appuyant sur la touche **`h`** dans la console ;
+- **affiché automatiquement** à la sortie (Ctrl-D et Ctrl-C).
+
+```
+===== Session history: 7 event(s) =====
+  14:26:03  Started: 512K mode, com1 @ 19200 bps, folder "Disk3", 13 file(s) loaded
+  14:26:04  Connection: 128 read(s), 126 write(s)
+  14:26:04  Saved "QQ.BAS" (3688 bytes)
+  14:26:04  Disconnected - 199 KB free
+  14:26:04  Stopped (Ctrl-D) - files saved
+========================================
+```
+
+C'est un résumé **au niveau des actions**, complémentaire du `-v` qui, lui, trace chaque
+secteur. Si un fichier journal est ouvert (`-l`), l'historique y est aussi écrit.
 
 ### Espace disque restant
 
@@ -239,3 +261,42 @@ un battement `.` prouvant que le serveur est vivant et en attente.
 - `README.md` — ce fichier.
 
 Serveur d'origine © 1992-93 N.Kon. Pilote PLINKC © 1996-99 D.Mizobata / N.Kon.
+
+---
+
+## Annexe — Sauvegarder / restaurer une carte mémoire (RAMFILE)
+
+Au-delà des fichiers BASIC, on peut **sauvegarder l'intégralité d'une carte mémoire**
+(le lecteur `S2:` du PC-E500S) vers le PC, et la restaurer, en copiant son `RAMFILE`.
+À 19200 bauds, comptez **5 à 6 minutes** par transfert.
+
+### Rappel — installer le pilote PLINKC sur le Sharp
+
+1. Réserver la zone mémoire du code machine (372 octets, soit `&C00`, implanté/exécuté en `&BF000`) :
+   ```
+   POKE &BFE03,&1A,&FD,&0B,&00,&C0,&00 : CALL &FFFD8
+   ```
+2. Implanter le pilote en mémoire `S1:` : `CALL &BF000` (ou `RUN` `PLINKC.BAS`).
+3. Démarrer le serveur PC (`aplinks32.exe` ou `aplinks32_c17.exe`) puis, côté Sharp,
+   `INIT "L:5"` (disque distant 512 Ko).
+
+### Sauvegarde de S2 vers le PC
+
+1. Créer un dossier dédié sur le PC (ex. `Disk4`).
+2. PC : `.\aplinks32_c17.exe -p com3 -b 19200 -5 -d "Disk4"`
+3. Sharp : `COPY "S2:RAMFILE" TO "L:RAMFILE"`
+4. `INIT "L:D"` pour écrire le fichier. **Vérifier la taille annoncée** :
+   `Saved "RAMFILE." (NNNNNN bytes)` doit être **non nul**. Un `0 bytes` signale une
+   copie incomplète ou une source vide/protégée (voir ci-dessous) — recommencez.
+
+### Restauration du PC vers S2
+
+1. PC : `.\aplinks32_c17.exe -p com3 -b 19200 -5 -d "Disk4"` (le dossier contenant `RAMFILE`).
+2. Vérifier que la RAMFILE du Sharp **n'est pas protégée** : si `FILES "S2:"` affiche
+   `RAMFILE` suivi de la lettre **`P`**, la mémoire est protégée. La déprotéger avec :
+   ```
+   SET "S2:RAMFILE", " "
+   ```
+3. Sharp : `COPY "L:RAMFILE" TO "S2:"`
+4. Contrôle : `FILES "S2:"` doit montrer `RAMFILE` avec sa taille ; `FILES "F:"` doit
+   lister les fichiers restaurés. ⚠️ Le contenu précédent de S2 est **écrasé**.

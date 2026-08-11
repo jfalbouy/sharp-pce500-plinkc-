@@ -158,6 +158,16 @@ disconnect, and on exit; `on_sigint()` (installed via `signal(SIGINT, …)`) mak
 too before quitting (Ctrl-C does NOT flush — Ctrl-D and `INIT "L:D"` do). Useful capacities:
 122 KB (128K) / 502 KB (512K).
 
+**Session history (added after v1.04):** an in-memory timestamped log of high-level actions —
+`hist_add(fmt, …)` appends a line (`HH:MM:SS  text`, stored in `g_history[HIST_MAX][HIST_LINE]`),
+`hist_print()` dumps it (and tees to the `-l` log). Events recorded: start (mode/port/baud/folder/
+files), per-connection read+write counts (`g_conn_reads`/`g_conn_writes`, incremented at the
+`sread`/`swrite` calls, summarized+reset in `epilogue`), each saved file with size, and
+disconnects with free space. Shown on demand by pressing **`h`** in the console, and automatically
+on exit (Ctrl-D via `epilogue(0)`, Ctrl-C via `on_sigint`). NOTE: the old `ctrl_d_pressed()` was
+replaced by `poll_console()` which returns the pressed key (0 if none); the idle loop dispatches
+`0x04`→quit and `h`/`H`→history. Applied to BOTH sources.
+
 **Two parallel sources — do not merge them without being asked:**
 - `APLINKS.C` → `aplinks32.exe` (build.ps1 / Makefile, `-std=c99`) — the **reference**, the one
   validated on hardware. Leave it alone unless the user says otherwise.

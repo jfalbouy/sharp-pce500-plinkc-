@@ -108,6 +108,16 @@ int	g_dtr          = 0;        /* DTR line: 0=OFF (known-good default) */
 const char *g_diskdir  = NULL;     /* -d : PC folder used as the virtual disk */
 FILE   *g_logfile      = NULL;     /* -l : tee the verbose log to this file    */
 
+/* Session history: a timestamped log of high-level actions (start, preload,
+   per-connection read/write counts, files saved, disconnects).  Shown on
+   demand with the 'h' key and automatically at exit. */
+#define HIST_MAX  1000
+#define HIST_LINE 128
+char	g_history[HIST_MAX][HIST_LINE];
+int	g_history_n    = 0;
+int	g_conn_reads   = 0;        /* read commands in the current connection  */
+int	g_conn_writes  = 0;        /* write commands in the current connection */
+
 /* Preload spec, remembered so the disk can be re-loaded after a disconnect. */
 int	g_pre_argc     = 0;
 char  **g_pre_argv     = NULL;
@@ -115,7 +125,10 @@ int	g_pre_first     = 0;
 
 void usage(const char *prog);
 static void print_banner(FILE *out);
+static int  disk_free_sectors(void);
 static void print_free_space(void);
+static void hist_add(const char *fmt, ...);
+static void hist_print(void);
 static void on_sigint(int sig);
 void set_geometry(int use512);
 void epilogue(int keep_serving);
@@ -132,7 +145,7 @@ void put_com(unsigned char);
 void sread(int);
 void swrite(int);
 int serial_data_ready(void);
-int ctrl_d_pressed(void);
+int poll_console(void);
 #ifdef _WIN32
 void get_pathname(char *, char *);
 #endif
@@ -211,6 +224,10 @@ int main(int argc, char *argv[])
 	    port , baud , g_mode512 ? "512K" : "128K" ,
 	    g_rts ? "ON" : "OFF" , g_dtr ? "ON" : "OFF" );
     printf( "Disk folder: %s\n" , ( g_diskdir && g_diskdir[0] ) ? g_diskdir : "(current directory)" );
+    printf( "Press 'h' for the session history; Ctrl-D to flush+quit, Ctrl-C to quit.\n" );
+    hist_add( "Started: %s mode, %s @ %ld bps, folder \"%s\", %d file(s) loaded" ,
+	      g_mode512 ? "512K" : "128K" , port , baud ,
+	      ( g_diskdir && g_diskdir[0] ) ? g_diskdir : "." , g_loaded );
     if ( g_verbose ) {
 	printf( "Verbose ON: '.' = idle heartbeat (server alive, waiting);\n"
 		"each byte received from the pocket is logged below.\n" );
@@ -223,8 +240,11 @@ int main(int argc, char *argv[])
 	}
 
 	while( ! serial_data_ready() ) {
-	    if ( ctrl_d_pressed() ) {
-		epilogue( 0 );          /* Ctrl-D: flush files and quit */
+	    int key = poll_console();
+	    if ( key == 0x04 ) {                    /* Ctrl-D: flush + quit */
+		epilogue( 0 );
+	    } else if ( key == 'h' || key == 'H' ) {  /* show session history */
+		hist_print();
 	    }
 	    if ( g_verbose ) {
 		time_t now = time( NULL );
@@ -250,7 +270,7 @@ int main(int argc, char *argv[])
 		    sector = (sector_low & 0xff) + (sector_high & 0xff) * 256;
 		    if ( g_verbose ) vlog( "[R] read  sector %4d\n" , sector );
 		    else printf( "\rR" );
-		    sread( sector );
+		    g_conn_reads++;  sread( sector );
 		    for( i = 0; i <= 128 ; i++ ) {
 			put_com( buffer[ i ] );
 		    }
@@ -268,7 +288,7 @@ int main(int argc, char *argv[])
 			fflush(stdout);
 		    } else printf( "\rW" );
 		    if ( (buffer[129] & 0xff) == 0xff ) {
-			swrite( sector );
+			g_conn_writes++;  swrite( sector );
 			put_com( 0 );
 		    }
 		    break;
@@ -374,10 +394,8 @@ static void print_banner(FILE *out)
     fprintf( out , "<<< (c) 2026 Updating Jean-Francois Albouy >>>\n\n" );
 }
 
-static void print_free_space(void)
-/* Report the free space left on the virtual disk.  Counted from the FAT (a
-   cluster whose entry is 0 is free), so it reflects BOTH preloaded files and
-   files written by the pocket. */
+static int disk_free_sectors(void)
+/* Number of free data sectors, from the FAT (entry 0 = free cluster). */
 {
     int	    n, free_sectors = 0;
 
@@ -386,6 +404,15 @@ static void print_free_space(void)
 	    free_sectors++;
 	}
     }
+    return( free_sectors );
+}
+
+static void print_free_space(void)
+/* Report the free space left on the virtual disk (counts BOTH preloaded and
+   pocket-written files, since it walks the FAT). */
+{
+    int	free_sectors = disk_free_sectors();
+
     printf( "Disk free: %ld KB of %ld KB (%.1f%%)\n" ,
 	    (long)free_sectors   * 128 / 1024 ,
 	    (long)g_data_sectors * 128 / 1024 ,
@@ -393,13 +420,58 @@ static void print_free_space(void)
     fflush( stdout );
 }
 
+static void hist_add(const char *fmt, ...)
+/* Append a timestamped line to the session history. */
+{
+    va_list	ap;
+    time_t	now;
+    struct tm  *t;
+    int		off;
+
+    if ( g_history_n >= HIST_MAX ) {
+	return;
+    }
+    now = time( NULL );
+    t   = localtime( &now );
+    off = ( t != NULL ) ? (int)strftime( g_history[g_history_n] , 12 , "%H:%M:%S  " , t ) : 0;
+    va_start( ap , fmt );
+    vsnprintf( g_history[g_history_n] + off , HIST_LINE - off , fmt , ap );
+    va_end( ap );
+    g_history_n++;
+}
+
+static void hist_print(void)
+/* Show the whole session history (also to the -l log file, if any). */
+{
+    int	i;
+
+    printf( "\n===== Session history: %d event(s) =====\n" , g_history_n );
+    for ( i = 0 ; i < g_history_n ; i++ ) {
+	printf( "  %s\n" , g_history[i] );
+    }
+    printf( "========================================\n" );
+    fflush( stdout );
+    if ( g_logfile ) {
+	fprintf( g_logfile , "\n===== Session history: %d event(s) =====\n" , g_history_n );
+	for ( i = 0 ; i < g_history_n ; i++ ) {
+	    fprintf( g_logfile , "  %s\n" , g_history[i] );
+	}
+	fflush( g_logfile );
+    }
+}
+
 static void on_sigint(int sig)
-/* Ctrl-C: show the disk state and quit.  Files are NOT flushed here - use
-   Ctrl-D (or INIT "L:D" on the pocket) to save them. */
+/* Ctrl-C: show the disk state + history and quit.  Files are NOT flushed here
+   - use Ctrl-D (or INIT "L:D" on the pocket) to save them. */
 {
     (void)sig;
     printf( "\n" );
+    if ( g_conn_reads || g_conn_writes ) {
+	hist_add( "Interrupted mid-session: %d read(s), %d write(s)" , g_conn_reads , g_conn_writes );
+    }
+    hist_add( "Stopped (Ctrl-C) - unsaved changes discarded" );
     print_free_space();
+    hist_print();
     printf( "Interrupted - files NOT saved (use Ctrl-D or INIT \"L:D\" to save).\n" );
     exit( 0 );
 }
@@ -510,9 +582,13 @@ void epilogue(int keep_serving)
 	    int	    i, j, fat_number, current_dir, condition;
 	    char    filename[256];
 	    char    outpath[PATH_BUF];
-	    long    file_size;
+	    long    file_size, saved_size;
 
 	    printf( "\r*\nDisconnect - syncing files to disk...\n" );
+	    if ( g_conn_reads || g_conn_writes ) {
+		hist_add( "Connection: %d read(s), %d write(s)" , g_conn_reads , g_conn_writes );
+		g_conn_reads = g_conn_writes = 0;
+	    }
 	    current_dir = g_dir_top;
 	    while ( current_dir < g_sysbufsize ) {
 		if ( ( system_buffer[ current_dir ] != 0 ) && ( (system_buffer[ current_dir ] & 0xff) != 0xe5 ) && ( system_buffer[ current_dir + 0x0b ] == 0x20 ) ) {
@@ -536,6 +612,7 @@ void epilogue(int keep_serving)
 		    file_size = system_buffer[ current_dir + 0x1c ] & 0xff;
 		    file_size += ( system_buffer[ current_dir + 0x1d ] & 0xff ) * 0x100L;
 		    file_size += ( system_buffer[ current_dir + 0x1e ] & 0xff ) * 0x10000L;
+		    saved_size = file_size;
 
 		    disk_path( filename , outpath , sizeof outpath );
 		    if ( ( source_fd = fopen( outpath , "wb" ) ) == NULL ) {
@@ -577,6 +654,7 @@ void epilogue(int keep_serving)
 				t.tm_isdst = -1;
 				set_file_mtime( outpath , mktime( &t ) );
 			    }
+			    hist_add( "Saved \"%s\" (%ld bytes)" , filename , saved_size );
 			    printf("done\n");
 			} else {
 			    printf("disk full. Skip this file\n");
@@ -587,16 +665,19 @@ void epilogue(int keep_serving)
 		current_dir += 32;
 	    }
 	    printf("Sync done.\n");
+	    hist_add( "Disconnected - %ld KB free" , (long)disk_free_sectors() * 128 / 1024 );
 
 	    if ( keep_serving ) {
 		reset_disk();
 		preload_disk();      /* reload the folder for the next connection */
 		print_free_space();
 		serial_purge();
-		printf("Ready for a new connection (Ctrl-D to flush+quit, Ctrl-C to quit).\n");
+		printf("Ready for a new connection (Ctrl-D flush+quit, Ctrl-C quit, 'h' history).\n");
 		return;
 	    }
 	    print_free_space();
+	    hist_add( "Stopped (Ctrl-D) - files saved" );
+	    hist_print();
 	    exit(0);
 }
 
@@ -705,11 +786,11 @@ int serial_data_ready(void)
     return( stat.cbInQue > 0 );
 }
 
-int ctrl_d_pressed(void)
-/* Return 1 if [CTRL]+[D] has been pressed on the console. */
+int poll_console(void)
+/* Return a key pressed on the console (0 if none). */
 {
-    if ( _kbhit() && _getch() == 0x04 ) {
-	return( 1 );
+    if ( _kbhit() ) {
+	return( _getch() );
     }
     return( 0 );
 }
@@ -816,8 +897,8 @@ int serial_data_ready(void)
     return( select( serial_fd + 1 , &r , NULL , NULL , &tv ) > 0 && FD_ISSET( serial_fd , &r ) );
 }
 
-int ctrl_d_pressed(void)
-/* Return 1 if [CTRL]+[D] (0x04) is available on stdin. */
+int poll_console(void)
+/* Return a key available on stdin (0 if none). */
 {
     fd_set	    r;
     struct timeval  tv;
@@ -828,8 +909,8 @@ int ctrl_d_pressed(void)
     FD_ZERO( &r );
     FD_SET( STDIN_FILENO , &r );
     if ( select( STDIN_FILENO + 1 , &r , NULL , NULL , &tv ) > 0 && FD_ISSET( STDIN_FILENO , &r ) ) {
-	if ( read( STDIN_FILENO , &c , 1 ) == 1 && c == 0x04 ) {
-	    return( 1 );
+	if ( read( STDIN_FILENO , &c , 1 ) == 1 ) {
+	    return( c );
 	}
     }
     return( 0 );
