@@ -1,10 +1,9 @@
 # Local Claude Code settings (machine-specific)
 .claude/settings.local.json
 
-# Personal virtual-disk folders (own Sharp programs, not part of the project)
-APLINKS/v1.03/Disk1/
-APLINKS/v1.03/Disk2/
-APLINKS/v1.03/Disk3/
+# Personal virtual-disk folders (own Sharp programs / RAMFILE backups, not
+# part of the project) -- covers Disk1, Disk3, Disk_E500S, Disk4, etc.
+APLINKS/v1.03/Disk*/
 
 # Test / working artifacts
 APLINKS/v1.03/eval.txt
