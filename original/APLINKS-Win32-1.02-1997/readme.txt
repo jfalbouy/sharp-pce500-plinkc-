@@ -77,27 +77,3 @@
                          File listing.
                          File name upper case conversion.
  Ver.0.01    1996.05.11  Beta 1 release.
-
-
-===============================================================================
-  ADDENDUM - 2026-07-10 : modernized, 512K-capable APLINKS (v1.03 DOS server)
-===============================================================================
-
- This note concerns a *different* program in this collection: the original
- MS-DOS command-line server APLINKS Ver.1.03 by N.Kon (see ../v1.03/), NOT the
- Win32 GUI documented above. Its C source (APLINKS.C) has been:
-
-  - Ported to ISO C (C99). It builds with gcc/clang/MSVC on Windows and cc on
-    Linux/macOS. The virtual-disk logic and the on-wire protocol are unchanged;
-    only the platform layer moved off <dos.h> (Win32 or POSIX serial I/O).
-
-  - Given 128K AND 512K disk modes (the 1.03 original was 128K only), matching
-    the 512K feature of this Win32 edition. Select it with the -1 / -5 option,
-    or let it auto-switch on the driver's 'S' handshake at INIT (on the pocket
-    computer, INIT "L:5" = 512K, INIT "L:1" = 128K).
-
-  - Given runtime serial options: aplinks32 -p COM3 -b 19200 [files...]  (-h).
-
- Files (in ../v1.03/): APLINKS.C (portable source) and aplinks32.exe (new
- Windows build); the original DOS APLINKS.EXE (1993) is kept intact.
-===============================================================================

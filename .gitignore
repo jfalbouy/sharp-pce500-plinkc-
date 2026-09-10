@@ -1,20 +1,20 @@
 # Local Claude Code settings (machine-specific)
 .claude/settings.local.json
 
-# Personal virtual-disk folders (own Sharp programs / RAMFILE backups, not
-# part of the project) -- covers Disk1, Disk3, Disk_E500S, Disk4, etc.
-APLINKS/v1.03/Disk*/
+# The maintainer's local master copy of the untouched archives (already
+# published, pristine, under original/) and gray-zone items kept off the
+# public repo (French translations, French-annotated driver source).
+Sources originaux/
+_local/
 
-# Test / working artifacts
-APLINKS/v1.03/eval.txt
-APLINKS/v1.03/TEST.BAS
-APLINKS/v1.03/TEST2.BAS
-APLINKS/v1.03/init.bas
-APLINKS/v1.03/Pour completer README.txt
+# Personal virtual-disk folders / RAMFILE backups created when running the
+# server (own Sharp programs, not part of the project).
+Disk*/
 
 # Office lock & temp files
 ~$*
 *.tmp
 
-# C object files (the Windows .exe and PLINKC.OBJ are committed on purpose)
+# C object files (committed binaries: the .exe and original PLINKC/PLINK
+# installers are on purpose; only stray build objects are ignored)
 *.o

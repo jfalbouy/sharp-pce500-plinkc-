@@ -1,0 +1,81 @@
+NOTICE
+======
+
+This repository preserves and modernizes 1990s Japanese freeware for the
+Sharp PC-E500 series pocket computer. It bundles the ORIGINAL author works,
+redistributed UNMODIFIED under original/, together with a clearly separated
+2026 derivative work under modernized/, with attribution to every author.
+
+
+ORIGINAL WORKS (copyright held by their respective authors)
+-----------------------------------------------------------
+
+1. PLINK — "Pocket Link System", the original driver, server and wire protocol
+   Copyright (C) 1990, 1993, 1994  N.Kon (近成人)
+   Preserved in:  original/PLINK-1.04-1994/
+   Terms (PLINK.DOC): the copyright is held by N.Kon; redistribution of the
+   archive is free as long as the archive contents are NOT modified.
+
+2. PLINKC — "Pocket Link Cache Device Driver" for the PC-E500 series
+   Copyright (C) 1996, 1997, 1999  Daisuke Mizobata (溝端大介)
+   Based on PLINK.SYS 1.04 by N.Kon.
+   Preserved in:  original/PLINKC-1.62-1999/
+   Terms (README.DOC): freeware; free redistribution over networks is permitted
+   provided ALL files of the archive are distributed UNMODIFIED and the
+   copyright notices are not altered.
+
+3. APLINKS — "Another pocket link file server" (MS-DOS)
+   Copyright (C) 1992, 1993  N.Kon (近成人)
+   Preserved in:  original/APLINKS-DOS-1.03-1993/
+   Terms (APLINKS.DOC): the copyright is held by N.Kon; redistribution of the
+   archive is free as long as the archive contents are NOT modified.
+
+4. APLINKS for Win32
+   Copyright (C) 1996-1997  Y.Akagawa (赤川裕一)
+   Original version copyright (C) 1992, 1993  N.Kon.
+   Preserved in:  original/APLINKS-Win32-1.02-1997/
+   Terms (readme.txt): freeware; may be distributed provided the archive is
+   kept in original intact condition; may not be sold commercially or privately
+   without the author's permission.
+
+The four original archives are stored, byte-for-byte unmodified, under
+original/. Their copyright notices are intact.
+
+
+DERIVATIVE WORK (2026)
+----------------------
+
+Copyright (C) 2026  Jean-François Albouy
+Located in:  modernized/aplinks/
+
+This is a derivative of N.Kon's APLINKS 1.03 server (APLINKS.C). Changes:
+  - ported from MS-DOS <dos.h> to ISO C (C99, plus a C17 variant) with a
+    #ifdef _WIN32 / POSIX platform layer (builds on Windows, Linux, macOS);
+  - added 128K/512K disk modes, a "disk folder" model, file-timestamp
+    preservation, runtime serial options, verbose logging, free-space and
+    session-history reporting.
+The on-wire protocol and the virtual-disk logic are byte-for-byte unchanged
+from N.Kon's original. All original copyright notices are preserved in the
+source and in the produced binaries.
+
+
+GOOD-FAITH STATEMENT
+--------------------
+
+These programs are 1990s freeware, distributed without fee. This repository
+redistributes the original archives unmodified — as their licenses allow — and
+adds a clearly separated, fully attributed derivative for preservation and for
+continued use on real hardware. No fee is charged and no copyright notice has
+been removed or altered.
+
+The original licenses grant redistribution of the unmodified archive but do not
+explicitly grant the right to create derivative works. The derivative here is
+offered in good faith for a long-abandoned platform. Any rights holder who
+objects to the inclusion of their material may contact the maintainer and it
+will be removed promptly.
+
+Original author contacts, as printed in the 1990s documentation (very likely
+inactive today):
+  - N.Kon        kon@cs.titech.ac.jp   /   Nifty-Serve KFD02231
+  - D.Mizobata   BXR00012@nifty.ne.jp
+  - Y.Akagawa    yakagawa@st.rim.or.jp

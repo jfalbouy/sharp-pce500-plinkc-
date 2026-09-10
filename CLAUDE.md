@@ -2,6 +2,24 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Repository layout (reorganized 2026-09 for public release)
+
+The repo was restructured so it can go public cleanly (see root `NOTICE`):
+- **`original/`** — the four pristine author archives, byte-for-byte **unmodified**
+  (`PLINK-1.04-1994/`, `PLINKC-1.62-1999/`, `APLINKS-DOS-1.03-1993/`,
+  `APLINKS-Win32-1.02-1997/`). Never edit these — the licenses require unmodified redistribution.
+- **`modernized/aplinks/`** — the 2026 derivative server: `APLINKS.C` (C99 reference) +
+  `APLINKS_C17.C` (C17 variant) + the `aplinks32*.exe` binaries, build scripts and its French
+  `README.md`. **This is where all server work happens.**
+- Root: `README.md` (public), `NOTICE` (attribution/licenses), `CLAUDE.md` (this file).
+- Not published (git-ignored): `Sources originaux/` (maintainer's master copy of the archives) and
+  `_local/` (gray-zone items kept off the public repo: French-translated docs `Anleitung.txt` /
+  `PLINKC.docx`, and the French-annotated driver source `PLINKC.asm` — a *modified* original, so
+  excluded for license compliance until a pristine `PLINKC.ASM` is available).
+
+**Path note:** older references below that say `APLINKS/v1.03/…` predate this move — the modernized
+server is now `modernized/aplinks/…` and the pristine originals are under `original/…`.
+
 ## What this is
 
 PLINKC ("Pocket Link Cache Device Driver", ver 1.62) is a resident device driver for the

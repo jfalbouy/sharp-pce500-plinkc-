@@ -254,13 +254,17 @@ un battement `.` prouvant que le serveur est vivant et en attente.
 ## 10. Fichiers de ce dossier
 
 - `APLINKS.C` — source C99 portable (Win32 + POSIX), compatible 128/512 Ko.
-- `aplinks32.exe` — binaire Windows recompilé.
-- `build.ps1` / `Makefile` — scripts de compilation (Windows / POSIX).
-- `APLINKS.EXE` — binaire **MS-DOS d'origine** (1993), conservé intact.
-- `APLINKS.DOC` — documentation d'origine (japonais) + addendum.
+- `APLINKS_C17.C` — variante C17 (comportement identique, `bool` + `static_assert`).
+- `aplinks32.exe` / `aplinks32_c17.exe` — binaires Windows recompilés.
+- `build.ps1` / `build_c17.ps1` / `Makefile` — scripts de compilation.
 - `README.md` — ce fichier.
 
+Le binaire DOS d'origine `APLINKS.EXE` et les archives d'origine (N.Kon, Mizobata,
+Akagawa) sont conservés **intacts** à la racine du dépôt sous `original/` — voir le
+`README.md` et le `NOTICE` à la racine.
+
 Serveur d'origine © 1992-93 N.Kon. Pilote PLINKC © 1996-99 D.Mizobata / N.Kon.
+Portage moderne © 2026 Jean-François Albouy.
 
 ---
 
