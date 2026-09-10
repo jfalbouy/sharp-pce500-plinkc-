@@ -1,5 +1,7 @@
 # Sharp PC-E500 — Pocket Link System (PLINK / PLINKC / APLINKS)
 
+**🇬🇧 English** · [🇫🇷 Français](README.fr.md)
+
 Preservation and modernization of the **Pocket Link System**, a family of 1990s
 Japanese freeware that turns a **Sharp PC-E500 series** pocket computer into a
 client of a PC over a serial cable. The pocket computer sees an ordinary disk
