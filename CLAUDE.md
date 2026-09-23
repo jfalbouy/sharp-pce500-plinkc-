@@ -186,6 +186,14 @@ on exit (Ctrl-D via `epilogue(0)`, Ctrl-C via `on_sigint`). NOTE: the old `ctrl_
 replaced by `poll_console()` which returns the pressed key (0 if none); the idle loop dispatches
 `0x04`→quit and `h`/`H`→history. Applied to BOTH sources.
 
+**v1.05 — auto-uudecode on flush:** when the pocket saves a file whose name ends in `.uue` or
+`.uux`, `epilogue` decodes the flushed text to a binary `.obj` alongside it (so the user need not
+run `uudecode.exe`). Self-contained: `uudecode_file()` ports a faithful subset of the maintainer's
+`C:\Claude\UUENCODE-UUDECODE` decoder (UU alphabet, `NNNN '` BASIC-prefix stripping for `.uux`, the
+Sharp per-line checksum) — verified byte-for-byte against that project's oracles (uudec2/uudecode
+`.uue`, UUENC3 `.uux`). Default on; `--no-uudecode` disables. The original `.uue`/`.uux` is kept;
+only the `.obj` is added; bad checksum/size is flagged but still written. In BOTH sources.
+
 **Two parallel sources — do not merge them without being asked:**
 - `APLINKS.C` → `aplinks32.exe` (build.ps1 / Makefile, `-std=c99`) — the **reference**, the one
   validated on hardware. Leave it alone unless the user says otherwise.

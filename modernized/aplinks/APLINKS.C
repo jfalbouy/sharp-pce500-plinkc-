@@ -70,7 +70,7 @@
 #  define DEFAULT_PORT "/dev/ttyUSB0"
 #endif
 
-#define VERSION      "1.04"         /* version of this modernized server     */
+#define VERSION      "1.05"         /* version of this modernized server     */
 
 #define DEFAULT_BAUD 9600           /* PLINKC needs 9600 bps or faster, N,8,1 */
 
@@ -107,6 +107,7 @@ int	g_rts          = 1;        /* RTS line: 1=ON. The pocket only      */
 int	g_dtr          = 0;        /* DTR line: 0=OFF (known-good default) */
 const char *g_diskdir  = NULL;     /* -d : PC folder used as the virtual disk */
 FILE   *g_logfile      = NULL;     /* -l : tee the verbose log to this file    */
+int	g_uudecode     = 1;        /* auto-decode flushed .uue/.uux -> .obj     */
 
 /* Session history: a timestamped log of high-level actions (start, preload,
    per-connection read/write counts, files saved, disconnects).  Shown on
@@ -138,6 +139,9 @@ static void preload_disk(void);
 static void reset_disk(void);
 static void set_file_mtime(const char *path, time_t mt);
 static void serial_purge(void);
+static int  uudecode_file(const char *inpath, const char *outpath, char *msg, size_t msgsz);
+static void make_obj_path(const char *in, char *out, size_t outsz);
+static int  ends_with_ci(const char *s, const char *suffix);
 void append_char(char *, char);
 int  open_serial(const char *port, long baud);
 unsigned char get_com(void);
@@ -193,6 +197,8 @@ int main(int argc, char *argv[])
 	    g_diskdir = argv[++argn];
 	} else if ( strcmp( argv[argn] , "-l" ) == 0 && argn + 1 < argc ) {
 	    g_logfile = fopen( argv[++argn] , "w" );
+	} else if ( strcmp( argv[argn] , "--no-uudecode" ) == 0 ) {
+	    g_uudecode = 0;
 	} else if ( strcmp( argv[argn] , "-h" ) == 0 || strcmp( argv[argn] , "--help" ) == 0 ) {
 	    usage( argv[0] );
 	    return( 0 );
@@ -348,6 +354,7 @@ void usage(const char *prog)
 	"  -l file   also write the verbose log to 'file'\n"
 	"  --rts on|off  RTS line (default on; the pocket needs it to transmit)\n"
 	"  --dtr on|off  DTR line (default off)\n"
+	"  --no-uudecode disable auto-decoding of flushed .uue/.uux to .obj\n"
 	"  file ...  specific host files to preload (instead of the whole folder)\n" ,
 	prog , DEFAULT_PORT , DEFAULT_BAUD );
 }
@@ -474,6 +481,203 @@ static void on_sigint(int sig)
     hist_print();
     printf( "Interrupted - files NOT saved (use Ctrl-D or INIT \"L:D\" to save).\n" );
     exit( 0 );
+}
+
+/*======================================================================
+	Auto-decode of Sharp uuencode transfers (.uue / .uux text -> .obj)
+
+	A faithful subset of the reference uudecode (see the project
+	C:\Claude\UUENCODE-UUDECODE, by the same maintainer): the UU alphabet,
+	stripping of BASIC line prefixes "NNNN '" (.uux / .uu), and the Sharp's
+	per-line checksum.  When the pocket saves a file whose name ends in .uue
+	or .uux, the flushed text is decoded here into a binary .obj alongside it,
+	so the user no longer has to run uudecode.exe by hand.
+======================================================================*/
+
+typedef struct { const char *p; size_t n; } uu_line;
+
+static int ends_with_ci(const char *s, const char *suffix)
+{
+    size_t ls = strlen( s ), lf = strlen( suffix ), i;
+
+    if ( ls < lf ) return( 0 );
+    for ( i = 0 ; i < lf ; i++ )
+	if ( tolower( (unsigned char)s[ ls - lf + i ] ) != tolower( (unsigned char)suffix[i] ) )
+	    return( 0 );
+    return( 1 );
+}
+
+static void make_obj_path(const char *in, char *out, size_t outsz)
+/* Copy "in", replacing its file extension with ".obj". */
+{
+    char *dot;
+
+    snprintf( out , outsz , "%s" , in );
+    dot = strrchr( out , '.' );
+    if ( dot != NULL && strpbrk( dot , "/\\" ) == NULL ) {
+	strcpy( dot , ".obj" );          /* .uue / .uux are 4 chars, like .obj */
+    } else {
+	size_t l = strlen( out );
+	snprintf( out + l , outsz - l , ".obj" );
+    }
+}
+
+/* Decode one UU character (uuencode alphabet); -1 if invalid. */
+static int uu_dec6(int c)
+{
+    if ( c == '`' || c == ' ' ) return( 0 );
+    if ( c >= 0x21 && c <= 0x5f ) return( c - 0x20 );
+    return( -1 );
+}
+
+/* Length of a line once trailing blanks are dropped (mail transports strip
+   them, so we must not rely on them). */
+static size_t uu_useful(const char *p, size_t n)
+{
+    while ( n > 0 && ( p[ n - 1 ] == ' ' || p[ n - 1 ] == '\t' ) ) n--;
+    return( n );
+}
+
+/* Length of a "NNNN '" BASIC line prefix (.uu / .uux), or 0 if none. */
+static size_t uu_bprefix(const char *p, size_t n)
+{
+    size_t u = uu_useful( p , n ), i = 0;
+
+    if ( u == 0 || p[0] < '0' || p[0] > '9' ) return( 0 );
+    while ( i < u && p[i] >= '0' && p[i] <= '9' ) i++;
+    while ( i < u && p[i] == ' ' ) i++;
+    return( ( i < u && p[i] == '\'' ) ? i + 1 : 0 );
+}
+
+static int uudecode_file(const char *inpath, const char *outpath, char *msg, size_t msgsz)
+/* Decode the uuencoded text file "inpath" to the binary "outpath".
+   Returns 0 on success (msg = summary), non-zero on hard failure. */
+{
+    FILE	   *f;
+    long	    fsz;
+    unsigned char  *txt = NULL, *out = NULL;
+    size_t	    tlen = 0, olen = 0, k, i, ibegin = 0, nlines = 0, cap = 0;
+    uu_line	   *lines = NULL;
+    int		    found_begin = 0, basic = 0, bad = 0, saw_sum = 0, sum_bad = 0;
+    long	    announced = -1;
+    int		    rc = 1;
+
+    f = fopen( inpath , "rb" );
+    if ( f == NULL ) { snprintf( msg , msgsz , "cannot read %s" , inpath ); return( 1 ); }
+    fseek( f , 0 , SEEK_END ); fsz = ftell( f ); fseek( f , 0 , SEEK_SET );
+    if ( fsz < 0 ) { fclose( f ); snprintf( msg , msgsz , "seek error" ); return( 1 ); }
+    txt = (unsigned char *)malloc( (size_t)fsz + 1 );
+    out = (unsigned char *)malloc( (size_t)fsz + 1 );   /* decoded is smaller than text */
+    if ( txt == NULL || out == NULL ) { free(txt); free(out); fclose(f); snprintf(msg,msgsz,"out of memory"); return( 1 ); }
+    tlen = fread( txt , 1 , (size_t)fsz , f );
+    fclose( f );
+    while ( tlen > 0 && ( txt[ tlen - 1 ] == 0x1a || txt[ tlen - 1 ] == 0 ) ) tlen--;
+
+    /* Split into lines (any of CR, LF, CRLF). */
+    k = 0;
+    while ( k <= tlen ) {
+	size_t st = k;
+	void  *pp;
+	while ( k < tlen && txt[k] != '\n' && txt[k] != '\r' ) k++;
+	if ( nlines == cap ) {
+	    cap = cap ? cap * 2 : 128;
+	    pp = realloc( lines , cap * sizeof *lines );
+	    if ( pp == NULL ) { snprintf( msg , msgsz , "out of memory" ); goto done; }
+	    lines = (uu_line *)pp;
+	}
+	lines[ nlines ].p = (const char *)txt + st;
+	lines[ nlines ].n = k - st;
+	nlines++;
+	if ( k >= tlen ) break;
+	if ( txt[k] == '\r' && k + 1 < tlen && txt[ k + 1 ] == '\n' ) k += 2; else k += 1;
+    }
+
+    /* Find the "begin <mode> <name>" line; a BASIC prefix there means .uu/.uux. */
+    for ( i = 0 ; i < nlines ; i++ ) {
+	size_t saut = uu_bprefix( lines[i].p , lines[i].n );
+	const char *vp = lines[i].p + saut;
+	size_t vn = uu_useful( vp , lines[i].n - saut );
+	if ( vn >= 6 && memcmp( vp , "begin " , 6 ) == 0 ) {
+	    basic = ( saut > 0 ); ibegin = i; found_begin = 1; break;
+	}
+    }
+    if ( ! found_begin ) { snprintf( msg , msgsz , "no 'begin' line (not uuencoded?)" ); goto done; }
+
+    if ( basic )
+	for ( i = ibegin ; i < nlines ; i++ ) {
+	    size_t saut = uu_bprefix( lines[i].p , lines[i].n );
+	    lines[i].p += saut; lines[i].n -= saut;
+	}
+
+    /* Decode data lines until "end" or a zero-length line. */
+    for ( i = ibegin + 1 ; i < nlines ; i++ ) {
+	const char *p = lines[i].p;
+	size_t u = uu_useful( p , lines[i].n );
+	size_t need, g;
+	unsigned lsum = 0;
+	int n, got = 0;
+
+	if ( u == 0 ) continue;
+	if ( u == 3 && memcmp( p , "end" , 3 ) == 0 ) break;
+	n = uu_dec6( (unsigned char)p[0] );
+	if ( n < 0 ) continue;               /* a 'size'/'sum'/text line */
+	if ( n == 0 ) continue;              /* zero-length data terminator */
+	if ( n > 45 ) { bad = 1; continue; }
+
+	need = ( (size_t)n + 2 ) / 3 * 4;
+	for ( g = 0 ; g < need ; g += 4 ) {
+	    int v[4], j; unsigned char t[3];
+	    for ( j = 0 ; j < 4 ; j++ ) {
+		size_t idx = 1 + g + (size_t)j;
+		int val = ( idx < u ) ? uu_dec6( (unsigned char)p[idx] ) : 0;
+		if ( val < 0 ) { bad = 1; val = 0; }
+		v[j] = val;
+	    }
+	    t[0] = (unsigned char)( ( v[0] << 2 ) | ( v[1] >> 4 ) );
+	    t[1] = (unsigned char)( ( ( v[1] << 4 ) & 0xf0 ) | ( v[2] >> 2 ) );
+	    t[2] = (unsigned char)( ( ( v[2] << 6 ) & 0xc0 ) | v[3] );
+	    lsum += (unsigned)t[0] + t[1] + t[2];
+	    for ( j = 0 ; j < 3 && got < n ; j++ ) { out[ olen++ ] = t[j]; got++; }
+	}
+	if ( u > need + 1 ) {               /* a per-line checksum char follows */
+	    int ann = uu_dec6( (unsigned char)p[ need + 1 ] );
+	    saw_sum = 1;
+	    if ( ann < 0 || (unsigned)ann != ( lsum & 0x3fu ) ) sum_bad = 1;
+	}
+    }
+
+    /* Optional "size <n>" trailer written by the Sharp. */
+    for ( i = ibegin ; i < nlines ; i++ ) {
+	size_t u = uu_useful( lines[i].p , lines[i].n );
+	if ( u >= 5 && memcmp( lines[i].p , "size " , 5 ) == 0 ) {
+	    const char *q = lines[i].p + 5, *e = lines[i].p + u; long v = 0;
+	    while ( q < e && *q == ' ' ) q++;
+	    while ( q < e && *q >= '0' && *q <= '9' ) { v = v * 10 + ( *q - '0' ); q++; }
+	    announced = v;
+	}
+    }
+
+    if ( olen == 0 ) { snprintf( msg , msgsz , "no data decoded" ); goto done; }
+
+    f = fopen( outpath , "wb" );
+    if ( f == NULL ) { snprintf( msg , msgsz , "cannot create %s" , outpath ); goto done; }
+    if ( fwrite( out , 1 , olen , f ) != olen || fclose( f ) != 0 ) {
+	snprintf( msg , msgsz , "write error on %s" , outpath ); goto done;
+    }
+    rc = 0;
+    {   /* build a one-line summary, flagging any integrity concern */
+	const char *warn = "";
+	if ( sum_bad ) warn = "  WARNING: bad line checksum!";
+	else if ( bad ) warn = "  WARNING: invalid characters!";
+	else if ( announced >= 0 && (size_t)announced != olen ) warn = "  WARNING: size mismatch!";
+	snprintf( msg , msgsz , "\"%s\" -> \"%s\" (%lu bytes%s)%s" ,
+	    inpath , outpath , (unsigned long)olen ,
+	    saw_sum ? ", checksums OK" : "" , warn );
+    }
+
+done:
+    free( lines ); free( out ); free( txt );
+    return( rc );
 }
 
 static void disk_path(const char *name, char *out, size_t outsz)
@@ -656,6 +860,20 @@ void epilogue(int keep_serving)
 			    }
 			    hist_add( "Saved \"%s\" (%ld bytes)" , filename , saved_size );
 			    printf("done\n");
+			    /* Auto-decode Sharp uuencode transfers to a .obj binary. */
+			    if ( g_uudecode &&
+				 ( ends_with_ci( filename , ".uue" ) || ends_with_ci( filename , ".uux" ) ) ) {
+				char objpath[PATH_BUF];
+				char m[ PATH_BUF * 2 + 64 ];
+				make_obj_path( outpath , objpath , sizeof objpath );
+				if ( uudecode_file( outpath , objpath , m , sizeof m ) == 0 ) {
+				    printf( "  uudecode: %s\n" , m );
+				    hist_add( "uudecode %s" , m );
+				} else {
+				    printf( "  uudecode skipped: %s\n" , m );
+				    hist_add( "uudecode skipped: %s" , m );
+				}
+			    }
 			} else {
 			    printf("disk full. Skip this file\n");
 			    remove( outpath );

@@ -1,6 +1,6 @@
 # APLINKS — Serveur de fichiers pour Sharp PC-E500 (128 / 512 Ko)
 
-**Version 1.04** — © 1992,93 N.Kon (programme d'origine) · © 2026 mise à jour Jean-François Albouy
+**Version 1.05** — © 1992,93 N.Kon (programme d'origine) · © 2026 mise à jour Jean-François Albouy
 
 `aplinks32` est le **programme côté PC** qui dialogue avec le pilote **PLINKC** installé
 sur un pocket **Sharp PC-E500 (S)**. Une fois les deux lancés, le pocket voit un lecteur
@@ -85,6 +85,7 @@ aplinks32 [-p port] [-b baud] [-1|-5] [-v] [-d dossier] [-l fichier] [--rts on|o
 | `-l fichier` | Écrit aussi le journal verbeux dans `fichier` | — |
 | `--rts on\|off` | Ligne RTS | `on` |
 | `--dtr on\|off` | Ligne DTR | `off` |
+| `--no-uudecode` | Désactive la conversion auto `.uue`/`.uux` → `.obj` (voir annexe) | (auto activé) |
 | `fichiers...` | Fichiers précis à **précharger** (au lieu de tout le dossier) | — |
 | `-h` | Aide | — |
 
@@ -265,6 +266,33 @@ Akagawa) sont conservés **intacts** à la racine du dépôt sous `original/` �
 
 Serveur d'origine © 1992-93 N.Kon. Pilote PLINKC © 1996-99 D.Mizobata / N.Kon.
 Portage moderne © 2026 Jean-François Albouy.
+
+---
+
+## Annexe — Décodage automatique `.uue` / `.uux` → `.obj`
+
+Les objets binaires du Sharp (`.obj`) transitent par la liaison série sous forme de
+**texte uuencodé** (`.uue`, ou `.uux` pour le format à préfixes de ligne BASIC). Depuis
+la **v1.05**, quand le pocket enregistre un fichier dont le nom se termine par `.uue` ou
+`.uux` et qu'on déconnecte (`INIT "L:D"` ou Ctrl-D), le serveur **décode automatiquement**
+le texte en binaire `.obj` à côté, dans le dossier-disque :
+
+```
+Writing "Disk1\PROG.UUE" ... done
+  uudecode: "Disk1\PROG.UUE" -> "Disk1\PROG.OBJ" (1680 bytes, checksums OK)
+```
+
+Plus besoin de lancer `uudecode.exe` à la main. Le décodeur gère :
+
+- l'**alphabet uuencode** classique, et les fichiers issus du PC (uuencode 5.25) comme du
+  Sharp (`UUENC3`, avec une **somme de contrôle par ligne** vérifiée) ;
+- le format **`.uux`** (préfixes `NNNN '` des lignes BASIC, retirés automatiquement).
+
+Le `.uue`/`.uux` d'origine est **conservé** ; seul le `.obj` est ajouté. Une somme fausse,
+un caractère invalide ou une taille incohérente sont **signalés** (`WARNING`) mais le `.obj`
+est tout de même écrit pour inspection. Pour désactiver cette conversion : `--no-uudecode`.
+
+*(Décodeur porté du projet `UUENCODE-UUDECODE` du même auteur, validé byte-pour-byte.)*
 
 ---
 
