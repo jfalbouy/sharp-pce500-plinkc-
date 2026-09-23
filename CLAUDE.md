@@ -194,6 +194,16 @@ Sharp per-line checksum) — verified byte-for-byte against that project's oracl
 `.uue`, UUENC3 `.uux`). Default on; `--no-uudecode` disables. The original `.uue`/`.uux` is kept;
 only the `.obj` is added; bad checksum/size is flagged but still written. In BOTH sources.
 
+**v1.06 — reverse encode `--uuencode` (opt-in):** the symmetric direction. At startup, if
+`--uuencode` is given, `uuencode_disk()` globs the disk folder for `*.obj` and encodes each to a
+Sharp-format `.uue` beside it (so `FILES "L:"` shows it for the pocket to LOAD). `uuencode_file()`
+writes `begin 644 <name>`, 45-byte data lines each ending in a per-line checksum char, a `` `` ``
+terminator, `end`, `size <n>`, CRLF + trailing 1Ah — byte-for-byte identical to the Sharp's UUENC3
+(verified: data lines identical to the reference `UUENC3.uux`, and round-trip through
+`uudecode_file` gives back the original .obj with valid checksums). Default OFF; the `.obj` is kept,
+only the `.uue` added. `make_obj_path` was generalized to `make_ext_path(in,out,sz,ext)`. Shared
+`uu_enc6`/`uu_dec6`. In BOTH sources. VERSION now 1.06.
+
 **Two parallel sources — do not merge them without being asked:**
 - `APLINKS.C` → `aplinks32.exe` (build.ps1 / Makefile, `-std=c99`) — the **reference**, the one
   validated on hardware. Leave it alone unless the user says otherwise.

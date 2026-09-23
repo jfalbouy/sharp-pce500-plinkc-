@@ -75,7 +75,7 @@
 #  define DEFAULT_PORT "/dev/ttyUSB0"
 #endif
 
-#define VERSION      "1.05"         /* version of this modernized server     */
+#define VERSION      "1.06"         /* version of this modernized server     */
 
 #define DEFAULT_BAUD 9600           /* PLINKC needs 9600 bps or faster, N,8,1 */
 
@@ -120,6 +120,7 @@ bool	g_dtr          = false;    /* DTR line: OFF (known-good default)   */
 const char *g_diskdir  = NULL;     /* -d : PC folder used as the virtual disk */
 FILE   *g_logfile      = NULL;     /* -l : tee the verbose log to this file    */
 bool	g_uudecode     = true;     /* auto-decode flushed .uue/.uux -> .obj     */
+bool	g_uuencode     = false;    /* --uuencode: at startup, encode disk .obj -> .uue */
 
 /* Session history: a timestamped log of high-level actions (start, preload,
    per-connection read/write counts, files saved, disconnects).  Shown on
@@ -152,7 +153,9 @@ static void reset_disk(void);
 static void set_file_mtime(const char *path, time_t mt);
 static void serial_purge(void);
 static int  uudecode_file(const char *inpath, const char *outpath, char *msg, size_t msgsz);
-static void make_obj_path(const char *in, char *out, size_t outsz);
+static int  uuencode_file(const char *inpath, const char *outpath, const char *objname, char *msg, size_t msgsz);
+static void uuencode_disk(void);
+static void make_ext_path(const char *in, char *out, size_t outsz, const char *newext);
 static int  ends_with_ci(const char *s, const char *suffix);
 void append_char(char *, char);
 int  open_serial(const char *port, long baud);
@@ -211,6 +214,8 @@ int main(int argc, char *argv[])
 	    g_logfile = fopen( argv[++argn] , "w" );
 	} else if ( strcmp( argv[argn] , "--no-uudecode" ) == 0 ) {
 	    g_uudecode = false;
+	} else if ( strcmp( argv[argn] , "--uuencode" ) == 0 ) {
+	    g_uuencode = true;
 	} else if ( strcmp( argv[argn] , "-h" ) == 0 || strcmp( argv[argn] , "--help" ) == 0 ) {
 	    usage( argv[0] );
 	    return( 0 );
@@ -230,6 +235,7 @@ int main(int argc, char *argv[])
     g_pre_first = argn;          /* first non-option argument (files, if any) */
 
     reset_disk();
+    uuencode_disk();             /* --uuencode: encode .obj -> .uue in the folder first */
     preload_disk();
     print_free_space();          /* disk usage after loading the disk folder */
 
@@ -367,6 +373,8 @@ void usage(const char *prog)
 	"  --rts on|off  RTS line (default on; the pocket needs it to transmit)\n"
 	"  --dtr on|off  DTR line (default off)\n"
 	"  --no-uudecode disable auto-decoding of flushed .uue/.uux to .obj\n"
+	"  --uuencode    at startup, encode the disk folder's .obj files to .uue\n"
+	"                (Sharp format, per-line checksums) so the pocket can FILES/LOAD them\n"
 	"  file ...  specific host files to preload (instead of the whole folder)\n" ,
 	prog , DEFAULT_PORT , DEFAULT_BAUD );
 }
@@ -519,18 +527,19 @@ static int ends_with_ci(const char *s, const char *suffix)
     return( 1 );
 }
 
-static void make_obj_path(const char *in, char *out, size_t outsz)
-/* Copy "in", replacing its file extension with ".obj". */
+static void make_ext_path(const char *in, char *out, size_t outsz, const char *newext)
+/* Copy "in", replacing its file extension with "newext" (e.g. ".obj", ".uue"). */
 {
     char *dot;
 
     snprintf( out , outsz , "%s" , in );
     dot = strrchr( out , '.' );
     if ( dot != NULL && strpbrk( dot , "/\\" ) == NULL ) {
-	strcpy( dot , ".obj" );          /* .uue / .uux are 4 chars, like .obj */
+	*dot = '\0';
+	snprintf( dot , outsz - (size_t)( dot - out ) , "%s" , newext );
     } else {
 	size_t l = strlen( out );
-	snprintf( out + l , outsz - l , ".obj" );
+	snprintf( out + l , outsz - l , "%s" , newext );
     }
 }
 
@@ -690,6 +699,94 @@ static int uudecode_file(const char *inpath, const char *outpath, char *msg, siz
 done:
     free( lines ); free( out ); free( txt );
     return( rc );
+}
+
+/* Encode one 6-bit value with the uuencode alphabet (0 -> '`'). */
+static int uu_enc6(int v)
+{
+    v &= 0x3f;
+    return( v ? ( v + 0x20 ) : '`' );
+}
+
+static int uuencode_file(const char *inpath, const char *outpath, const char *objname,
+			 char *msg, size_t msgsz)
+/* Encode the binary "inpath" to a Sharp-format .uue text: "begin 644 <objname>",
+   45-byte data lines each ending in a per-line checksum char, a "``" terminator,
+   "end", "size <n>", CRLF line endings and a trailing 1Ah.  This is exactly what
+   UUENC3 writes on the pocket, and what uudecode_file (above) reads back.
+   Returns 0 on success. */
+{
+    FILE	   *fi, *fo;
+    long	    fsz;
+    unsigned char  *buf = NULL;
+    size_t	    sz = 0, pos;
+
+    fi = fopen( inpath , "rb" );
+    if ( fi == NULL ) { snprintf( msg , msgsz , "cannot read %s" , inpath ); return( 1 ); }
+    fseek( fi , 0 , SEEK_END ); fsz = ftell( fi ); fseek( fi , 0 , SEEK_SET );
+    if ( fsz <= 0 ) { fclose( fi ); snprintf( msg , msgsz , "%s is empty/unreadable" , inpath ); return( 1 ); }
+    buf = (unsigned char *)malloc( (size_t)fsz );
+    if ( buf == NULL ) { fclose( fi ); snprintf( msg , msgsz , "out of memory" ); return( 1 ); }
+    sz = fread( buf , 1 , (size_t)fsz , fi );
+    fclose( fi );
+
+    fo = fopen( outpath , "wb" );
+    if ( fo == NULL ) { free( buf ); snprintf( msg , msgsz , "cannot create %s" , outpath ); return( 1 ); }
+
+    fprintf( fo , "begin 644 %s\r\n" , objname );
+    for ( pos = 0 ; pos < sz ; pos += 45 ) {
+	size_t len = ( sz - pos < 45 ) ? sz - pos : 45;
+	size_t i;
+	unsigned lsum = 0;
+	fputc( uu_enc6( (int)len ) , fo );
+	for ( i = 0 ; i < len ; i += 3 ) {
+	    unsigned a = buf[ pos + i ];
+	    unsigned b = ( i + 1 < len ) ? buf[ pos + i + 1 ] : 0u;
+	    unsigned c = ( i + 2 < len ) ? buf[ pos + i + 2 ] : 0u;
+	    fputc( uu_enc6( (int)( a >> 2 ) ) , fo );
+	    fputc( uu_enc6( (int)( ( ( a << 4 ) & 0x30u ) | ( ( b >> 4 ) & 0x0fu ) ) ) , fo );
+	    fputc( uu_enc6( (int)( ( ( b << 2 ) & 0x3cu ) | ( ( c >> 6 ) & 0x03u ) ) ) , fo );
+	    fputc( uu_enc6( (int)c ) , fo );
+	    lsum += a + b + c;
+	}
+	fputc( uu_enc6( (int)( lsum & 0x3fu ) ) , fo );      /* per-line checksum */
+	fputs( "\r\n" , fo );
+    }
+    fputc( '`' , fo ); fputc( '`' , fo ); fputs( "\r\n" , fo );   /* terminator: length 0 + sum 0 */
+    fputs( "end\r\n" , fo );
+    fprintf( fo , "size %lu\r\n" , (unsigned long)sz );
+    fputc( 0x1a , fo );                                           /* MS-DOS end-of-file marker */
+
+    if ( ferror( fo ) || fclose( fo ) != 0 ) {
+	free( buf ); snprintf( msg , msgsz , "write error on %s" , outpath ); return( 1 );
+    }
+    free( buf );
+    snprintf( msg , msgsz , "\"%s\" -> \"%s\" (%lu bytes)" , inpath , outpath , (unsigned long)sz );
+    return( 0 );
+}
+
+static void uuencode_disk(void)
+/* --uuencode: at startup, encode every .obj in the disk folder to a .uue text
+   (kept beside it) so the pocket can see and LOAD it. */
+{
+    int found;
+
+    if ( ! g_uuencode ) return;
+    disk_path( "*.obj" , filename , sizeof filename );
+    found = find_first();
+    while ( found == 0 ) {
+	char uuepath[PATH_BUF];
+	char m[ PATH_BUF * 2 + 64 ];
+	const char *base = filename, *q;
+	for ( q = filename ; *q ; q++ )
+	    if ( *q == '/' || *q == '\\' || *q == ':' ) base = q + 1;
+	make_ext_path( filename , uuepath , sizeof uuepath , ".uue" );
+	if ( uuencode_file( filename , uuepath , base , m , sizeof m ) == 0 )
+	    printf( "uuencode: %s\n" , m );
+	else
+	    printf( "uuencode skipped: %s\n" , m );
+	found = find_next();
+    }
 }
 
 static void disk_path(const char *name, char *out, size_t outsz)
@@ -877,7 +974,7 @@ void epilogue(bool keep_serving)
 				 ( ends_with_ci( filename , ".uue" ) || ends_with_ci( filename , ".uux" ) ) ) {
 				char objpath[PATH_BUF];
 				char m[ PATH_BUF * 2 + 64 ];
-				make_obj_path( outpath , objpath , sizeof objpath );
+				make_ext_path( outpath , objpath , sizeof objpath , ".obj" );
 				if ( uudecode_file( outpath , objpath , m , sizeof m ) == 0 ) {
 				    printf( "  uudecode: %s\n" , m );
 				    hist_add( "uudecode %s" , m );

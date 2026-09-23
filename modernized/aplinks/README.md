@@ -1,6 +1,6 @@
 # APLINKS — Serveur de fichiers pour Sharp PC-E500 (128 / 512 Ko)
 
-**Version 1.05** — © 1992,93 N.Kon (programme d'origine) · © 2026 mise à jour Jean-François Albouy
+**Version 1.06** — © 1992,93 N.Kon (programme d'origine) · © 2026 mise à jour Jean-François Albouy
 
 `aplinks32` est le **programme côté PC** qui dialogue avec le pilote **PLINKC** installé
 sur un pocket **Sharp PC-E500 (S)**. Une fois les deux lancés, le pocket voit un lecteur
@@ -86,6 +86,7 @@ aplinks32 [-p port] [-b baud] [-1|-5] [-v] [-d dossier] [-l fichier] [--rts on|o
 | `--rts on\|off` | Ligne RTS | `on` |
 | `--dtr on\|off` | Ligne DTR | `off` |
 | `--no-uudecode` | Désactive la conversion auto `.uue`/`.uux` → `.obj` (voir annexe) | (auto activé) |
+| `--uuencode` | Au démarrage, encode les `.obj` du dossier en `.uue` Sharp (voir annexe) | désactivé |
 | `fichiers...` | Fichiers précis à **précharger** (au lieu de tout le dossier) | — |
 | `-h` | Aide | — |
 
@@ -293,6 +294,37 @@ un caractère invalide ou une taille incohérente sont **signalés** (`WARNING`)
 est tout de même écrit pour inspection. Pour désactiver cette conversion : `--no-uudecode`.
 
 *(Décodeur porté du projet `UUENCODE-UUDECODE` du même auteur, validé byte-pour-byte.)*
+
+---
+
+## Annexe — Encodage inverse `.obj` → `.uue` (PC → Sharp), option `--uuencode`
+
+Le pendant du décodage : pour **envoyer** un objet binaire `.obj` du PC vers le Sharp, on le
+convertit en texte `.uue` que le pocket peut charger puis décoder sur la machine. Depuis la
+**v1.06**, l'option **`--uuencode`** fait cela **au démarrage** du serveur : chaque `.obj`
+présent dans le dossier-disque est encodé en `.uue` (format Sharp, **une somme de contrôle
+par ligne**), écrit à côté, et donc **visible par `FILES "L:"`** :
+
+```
+PS> .\aplinks32.exe -p com3 -b 19200 -5 -d "Disk1" --uuencode
+uuencode: "Disk1\PROG.OBJ" -> "Disk1\PROG.uue" (1680 bytes)
+...
+```
+
+Côté Sharp :
+```
+INIT "L:5"
+FILES "L:"           ' PROG.UUE apparaît
+LOAD "L:PROG.UUE"    ' puis décoder sur la machine (UUDEC), ou via ton flux habituel
+```
+
+Le format produit est **identique octet pour octet** à celui du `UUENC3` du Sharp (en-tête
+`begin 644`, sommes par ligne, terminateur `` `` ``, `end`, `size n`, CRLF + `1Ah`). Le `.obj`
+d'origine est **conservé** ; seul le `.uue` est ajouté. `--uuencode` est **désactivé par
+défaut** (option dédiée). Réversible : le `.uue` produit se redécode en un `.obj` identique
+(round-trip validé byte-pour-byte).
+
+*(Encodeur porté du projet `UUENCODE-UUDECODE` du même auteur.)*
 
 ---
 
