@@ -23,6 +23,59 @@ Ce dépôt conserve les **archives d'origine intactes** (`original/`) et ajoute 
 
 ---
 
+## En images
+
+Validé de bout en bout sur un vrai **Sharp PC-E500S** — un ordinateur portable
+moderne jouant le rôle du lecteur de disque que le pocket n'a jamais eu.
+
+<table>
+  <tr>
+    <td width="50%"><img src="images/link-cables.jpg" width="100%"><br><sub><b>La liaison physique.</b> USB → adaptateur USB-série → changeur de genre / null-modem → le connecteur SIO 15 broches du Sharp. Toute cette chaîne suffit.</sub></td>
+    <td width="50%"><img src="images/pc-e500s-connected.jpg" width="100%"><br><sub><b>En ligne.</b> Le PC-E500S connecté, la LED TX de l'adaptateur allumée, affichant un listing <code>FILES "L:"</code> servi entièrement depuis le PC.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="images/sharp-copy-to-L.jpg" width="100%"><br><sub><b>Côté pocket.</b> <code>COPY "F:BASCOM.UUU" TO "L:"</code> — un fichier de la carte RAM copié vers le disque virtuel, secteur par secteur sur le fil.</sub></td>
+    <td width="50%"><img src="images/sharp-files.jpg" width="100%"><br><sub><b>Le pilote, résident.</b> <code>FILES</code> sur le pocket avec <code>PLINK.SYS</code> — le pilote à cache qui crée le lecteur <code>L:</code> — chargé et actif.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="images/aplinks-server.jpg" width="100%"><br><sub><b>Le serveur modernisé.</b> <code>aplinks32</code> démarrant en <b>mode 512 Ko à 19200 bps</b> (RTS=ON), chargeant automatiquement un dossier-disque et affichant l'espace libre.</sub></td>
+    <td width="50%"><img src="images/pc-disk-folder.jpg" width="100%"><br><sub><b>…et de retour sur le PC.</b> Les mêmes fichiers, ordinaires, éditables et sauvegardés, dans le dossier-disque après déconnexion du pocket.</sub></td>
+  </tr>
+</table>
+
+---
+
+## Pourquoi c'est utile
+
+Un Sharp PC-E500 est une petite machine réellement capable — un vrai BASIC, un
+assembleur intégré, un vrai clavier — mais sa seule ouverture sur le monde
+extérieur est un port série des années 1980 et des cartes RAM dont les piles de
+sauvegarde ont dépassé leur durée de vie depuis des décennies. Faire *entrer et
+sortir* le code et les données, voilà la vraie difficulté. Le Pocket Link System
+résout exactement cela, et ce dépôt le maintient fonctionnel sur les ordinateurs
+d'aujourd'hui :
+
+- **Un disque que le pocket n'a jamais eu.** Ni disquette ni flash — pourtant
+  `SAVE`, `LOAD`, `FILES` et `COPY` vers `L:` fonctionnent, de façon transparente,
+  jusqu'à 19200 bps. Votre ordinateur *est* le lecteur.
+- **Sauver avant que la pile ne lâche.** Des programmes BASIC et du code machine
+  vieux de trente ans, logés dans une RAM volatile, sont à une pile morte de
+  disparaître. Ici ils deviennent de simples fichiers PC — archivés, versionnés,
+  à l'abri — et peuvent être renvoyés tels quels.
+- **Vrai matériel, hôte moderne.** Pas un émulateur : le pocket des années 1990
+  lui-même, piloté par un serveur qui compile et tourne sur Windows, Linux et
+  macOS actuels. Un adaptateur USB-série à 10 € est le seul achat nécessaire.
+- **Éditer là où c'est confortable.** Écrire et remanier sur le PC dans un vrai
+  éditeur, puis charger sur le pocket en quelques secondes — l'aller-retour est
+  fidèle byte-pour-byte.
+- **Un protocole réellement lisible.** L'ensemble — un pilote de périphérique bloc
+  à cache de 8 secteurs et un protocole série compact — est assez petit pour se
+  comprendre de bout en bout : un exemple pédagogique complet, chose rare.
+- **Libre et ouvert.** Freeware depuis l'origine ; les sources d'origine sont
+  conservées intactes et le serveur moderne est proposé dans le même esprit.
+
+---
+
 ## L'histoire
 
 Le Pocket Link System a été créé par **N.Kon (近成人)** et publié pour la première
