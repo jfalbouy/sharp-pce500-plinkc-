@@ -98,7 +98,7 @@ see [`NOTICE`](NOTICE) for authors, copyrights and the exact license terms.
 ```
 original/                     ← the untouched author archives (pristine)
 ├── PLINK-1.04-1994/          N.Kon    — driver + server + docs + SC62015 source
-├── PLINKC-1.62-1999/         Mizobata — the cache driver (installer, BASIC, docs)
+├── PLINKC-1.62-1999/         Mizobata — the cache driver (installer, BASIC, A62 source, docs)
 ├── APLINKS-DOS-1.03-1993/    N.Kon    — the MS-DOS server (C source + EXE + docs)
 └── APLINKS-Win32-1.02-1997/  Akagawa  — the Windows GUI server
 

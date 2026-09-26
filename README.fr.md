@@ -102,7 +102,7 @@ les conditions exactes de licence.
 ```
 original/                     ← les archives d'auteur intactes (pristine)
 ├── PLINK-1.04-1994/          N.Kon    — pilote + serveur + docs + source SC62015
-├── PLINKC-1.62-1999/         Mizobata — le pilote à cache (installeur, BASIC, docs)
+├── PLINKC-1.62-1999/         Mizobata — le pilote à cache (installeur, BASIC, source A62, docs)
 ├── APLINKS-DOS-1.03-1993/    N.Kon    — le serveur MS-DOS (source C + EXE + docs)
 └── APLINKS-Win32-1.02-1997/  Akagawa  — le serveur GUI Windows
 

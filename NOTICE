@@ -41,6 +41,15 @@ ORIGINAL WORKS (copyright held by their respective authors)
 The four original archives are stored, byte-for-byte unmodified, under
 original/. Their copyright notices are intact.
 
+PLINKC.asm — the author's own assembly source — was added to
+original/PLINKC-1.62-1999/ on 2026-09-26. It is not an addition to the archive
+but a restoration of it: the archive's own packing list (README.DOC) names five
+files, and the source is one of them ("PLINKC.ASM — source listing, assemblable
+with A62 ver 2.2.0, line endings are CR"). Since the license requires that ALL
+files of the archive be redistributed unmodified, publishing it without the
+source was the deviation. The two CRC32 values the packing list gives — PLINKC
+34F28C0A, PLINKC.BAS 95F99C9F — are verified against the files here.
+
 
 DERIVATIVE WORK (2026)
 ----------------------
