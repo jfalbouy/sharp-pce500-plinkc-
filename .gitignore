@@ -2,8 +2,10 @@
 .claude/settings.local.json
 
 # The maintainer's local master copy of the untouched archives (already
-# published, pristine, under original/) and gray-zone items kept off the
-# public repo (French translations, French-annotated driver source).
+# published, pristine, under original/) and everything kept off the public
+# repo: the author's own PLINKC.asm source, its French translation, and
+# _local/driver/ -- our 2026 derivatives (A62 build, native port, BF000
+# variant, PLINK2 study). See _local/driver/README.md for why.
 Sources originaux/
 _local/
 
