@@ -3,8 +3,9 @@ NOTICE
 
 This repository preserves and modernizes 1990s Japanese freeware for the
 Sharp PC-E500 series pocket computer. It bundles the ORIGINAL author works,
-redistributed UNMODIFIED under original/, together with a clearly separated
-2026 derivative work under modernized/, with attribution to every author.
+redistributed UNMODIFIED under original/, together with clearly separated
+2026 derivative works under modernized/ (the APLINKS server and the PLINKC
+driver), with attribution to every author.
 
 
 ORIGINAL WORKS (copyright held by their respective authors)
@@ -51,8 +52,8 @@ source was the deviation. The two CRC32 values the packing list gives — PLINKC
 34F28C0A, PLINKC.BAS 95F99C9F — are verified against the files here.
 
 
-DERIVATIVE WORK (2026)
-----------------------
+DERIVATIVE WORK (2026) — APLINKS server
+---------------------------------------
 
 Copyright (C) 2026  Jean-François Albouy
 Located in:  modernized/aplinks/
@@ -67,18 +68,52 @@ The on-wire protocol and the virtual-disk logic are byte-for-byte unchanged
 from N.Kon's original. All original copyright notices are preserved in the
 source and in the produced binaries.
 
+APLINKS 1.07 (APLINKS107.C -> aplinks32_107.exe, same folder) is a further
+derivative of the 1.06 above, kept as a SEPARATE source: APLINKS.C 1.06 and its
+binaries are left untouched as the reference. It adds a 256K disk mode, one
+protocol addition (a mode query 'Q', which older servers ignore and which the
+1999 driver never sends), and guards against out-of-disk sectors and broken FAT
+chains. See modernized/aplinks/README-1.07.md.
+
+
+DERIVATIVE WORK (2026) — PLINKC driver
+--------------------------------------
+
+Copyright (C) 2026  Jean-François Albouy
+Located in:  modernized/plinkc/
+
+This is a derivative of PLINKC 1.62 by Daisuke Mizobata (itself based on
+PLINK.SYS 1.04 by N.Kon), made from the author's source PLINKC.asm preserved
+in original/PLINKC-1.62-1999/. Changes, all to be assembled with xasm2026-4:
+  - system constants taken from pce500.inc (generated include file);
+  - uninstallation by CALL &BF000 "-U", and detailed "already installed"
+    messages;
+  - INIT "L:?" (driver state), INIT "L:H" (help), unknown options reported;
+  - a 256K disk mode and the mode query 'Q' answered by APLINKS 1.07.
+The installer banner keeps Mizobata's and Kon's credit lines unaltered and
+adds one line for the update; the version reads "1.62-2026.1" so that the
+1.62 number remains the author's.
+
+modernized/plinkc/reference/ holds plinkc.a62.asm and PLINKC.OBJ, the reference
+the derivative is checked against. PLINKC.OBJ is an unmodified copy of the
+1999 object. plinkc.a62.asm is the author's source with two mechanical changes,
+so that xasm2026-4 can assemble it: CR line endings turned into LF, and one
+closing brace "}" added to a loop block that A62 tolerated open. It emits no
+byte: the source still assembles to the 1999 PLINKC.OBJ byte for byte. The
+unmodified source remains in original/PLINKC-1.62-1999/PLINKC.asm.
+
 
 GOOD-FAITH STATEMENT
 --------------------
 
 These programs are 1990s freeware, distributed without fee. This repository
 redistributes the original archives unmodified — as their licenses allow — and
-adds a clearly separated, fully attributed derivative for preservation and for
+adds clearly separated, fully attributed derivatives for preservation and for
 continued use on real hardware. No fee is charged and no copyright notice has
 been removed or altered.
 
 The original licenses grant redistribution of the unmodified archive but do not
-explicitly grant the right to create derivative works. The derivative here is
+explicitly grant the right to create derivative works. The derivatives here are
 offered in good faith for a long-abandoned platform. Any rights holder who
 objects to the inclusion of their material may contact the maintainer and it
 will be removed promptly.
