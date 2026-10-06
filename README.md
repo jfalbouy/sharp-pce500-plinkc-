@@ -10,8 +10,8 @@ written is carried over the serial link to a small **server program running on
 the PC**, where the files live as real files.
 
 This repository keeps the **original author archives intact** (`original/`) and
-adds a **modernized, portable server** that still talks to real hardware in 2026
-(`modernized/`).
+adds a **modernized, portable server** and an **updated driver** that still
+talk to real hardware in 2026 (`modernized/`).
 
 ```
    Sharp PC-E500(S)                         PC (Windows / Linux / macOS)
@@ -87,6 +87,7 @@ through several authors over the years:
 | 1996–97 | **APLINKS for Win32** | Y.Akagawa | A Windows GUI port of APLINKS, with **512 KB** disk support. |
 | 1996–99 | **PLINKC** ("Pocket Link **Cache**") | D.Mizobata | A faster driver: adds an **8-sector cache** to `PLINK.SYS` and supports the **512 KB** `L:` drive. Version 1.62 is the last. |
 | 2026 | **APLINKS modernized** | J-F Albouy | This repo: the 1993 DOS server **ported to portable C** and extended — see below. |
+| 2026 | **PLINKC 1.62-2026.1** | J-F Albouy | This repo: Mizobata's driver updated — uninstall, help, **256 KB** mode with APLINKS 1.07 — see below. |
 
 All of it is freeware. The original archives are preserved here byte-for-byte;
 see [`NOTICE`](NOTICE) for authors, copyrights and the exact license terms.
@@ -103,22 +104,31 @@ original/                     ← the untouched author archives (pristine)
 └── APLINKS-Win32-1.02-1997/  Akagawa  — the Windows GUI server
 
 modernized/
-└── aplinks/                  ← 2026 derivative: the portable, extended server
-    ├── APLINKS.C             C99 reference source (Win32 + POSIX)
-    ├── APLINKS_C17.C         C17 readability variant (identical behavior)
-    ├── aplinks32.exe         prebuilt Windows binary
-    ├── aplinks32_c17.exe     prebuilt Windows binary (C17 build)
-    ├── build.ps1 / build_c17.ps1 / Makefile
-    └── README.md             full usage & troubleshooting guide (French)
+├── aplinks/                  ← 2026 derivative: the portable, extended server
+│   ├── APLINKS.C             C99 reference source (Win32 + POSIX)
+│   ├── APLINKS_C17.C         C17 readability variant (identical behavior)
+│   ├── aplinks32.exe         prebuilt Windows binary
+│   ├── aplinks32_c17.exe     prebuilt Windows binary (C17 build)
+│   ├── build.ps1 / build_c17.ps1 / Makefile
+│   ├── README.md             full usage & troubleshooting guide (French)
+│   └── APLINKS107.C, aplinks32_107.exe, build_107.ps1, README-1.07.md
+│                             1.07: 256K mode + 'Q' (separate source, 1.06 untouched)
+└── plinkc/                   ← 2026 derivative: the updated PLINKC driver
+    ├── plinkc.asm            source (A62 dialect, assembled by xasm2026-4)
+    ├── PLINKC.OBJ, plinkc.uu object + self-decoding BASIC loader
+    ├── verifier.py           relocation-table check
+    ├── reference/            the author's source, reassembling the 1999 object
+    └── README.md             details (French)
 
 NOTICE                        attribution + license terms + list of changes
 CLAUDE.md                     deep technical notes (protocol, architecture, gotchas)
 ```
 
 The `original/` archives are redistributed **unmodified**, exactly as their
-freeware licenses permit. The `modernized/` server is a **clearly separated
-derivative** of N.Kon's APLINKS; its on-wire protocol is byte-for-byte identical
-to the original.
+freeware licenses permit. The `modernized/` server and driver are **clearly
+separated derivatives** of N.Kon's and Mizobata's works; the 1.06 server's on-wire
+protocol is byte-for-byte identical to the original, and 1.07 only adds the
+mode query `'Q'`, which older servers ignore.
 
 ---
 
@@ -163,6 +173,44 @@ One non-obvious hardware detail: the PC must assert **RTS=ON** or the pocket
 never transmits (its CS input is driven by the PC's RTS). The full usage and
 troubleshooting guide — including S2 memory-card (`RAMFILE`) backup/restore — is
 in **[`modernized/aplinks/README.md`](modernized/aplinks/README.md)** (French).
+
+---
+
+## The modernized driver (2026) and APLINKS 1.07
+
+`modernized/plinkc/` is **PLINKC 1.62 updated** (version `1.62-2026.1`), built
+from Mizobata's own source with [xasm2026-4](https://github.com/jfalbouy/XASM2026_CSharp),
+which reproduces his A62 assembler. The installed driver keeps the 1999 behavior
+and adds:
+
+- **uninstall**: `CALL &BF000 "-U"` unlinks the driver, then shows the `SET`/`KILL`
+  to type (it refuses if another driver sits above it, whose blocks would move);
+- **`INIT "L:?"`** (driver state), **`INIT "L:H"`** (version, size, commands, with a
+  key pause on the 4-line screen), unknown options reported;
+- a **256 KB** disk mode (`INIT "L:2"`), and a mode query **`'Q'`**: after each
+  `INIT`, the pocket adopts the mode the server really uses, instead of reading
+  the FAT as a directory when they disagree.
+
+`'Q'` is answered by **APLINKS 1.07** (`modernized/aplinks/APLINKS107.C`, `-2` for
+256K), a separate source: the 1.06 above stays the untouched reference. Older
+servers simply ignore `'Q'`, and the 1999 driver never sends it, so every
+combination keeps working in 128K/512K. 1.07 also refuses out-of-disk sectors and
+checks FAT chains at disconnect, two cases where 1.06 crashed.
+
+```
+# PC:
+aplinks32_107 -p com3 -b 19200 -2 -d "MyDisk"
+# Pocket: CALL &BF000 to install the driver, then
+INIT "L:2" : INIT "L:H"
+```
+
+`reference/` keeps the author's source, which still assembles byte-for-byte to the
+1999 `PLINKC.OBJ`; `verifier.py` checks the relocation table of every build.
+Everything was validated on a real PC-E500S. Details (French):
+[`modernized/plinkc/README.md`](modernized/plinkc/README.md),
+[`modernized/aplinks/README-1.07.md`](modernized/aplinks/README-1.07.md).
+Prebuilt `plinkc.uu`, `PLINKC.OBJ` and `aplinks32_107.exe`: see the
+[Releases](https://github.com/jfalbouy/sharp-pce500-plinkc-/releases).
 
 ---
 
