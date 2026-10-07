@@ -154,6 +154,10 @@ Messages de la désinstallation :
 UUENCODE, la lecture de l'argument court jusqu'à la fin de la ligne : un `:` suivi d'autres
 instructions serait sauté.
 
+**Transférer les programmes BASIC tokenisés** (`SAVE "L:…"` sans `,A`, ou `.BSA` converti
+sur le PC) : un `LOAD` de 20 Ko prend environ 10 à 12 s, contre environ 75 s en texte ASCII,
+que le Sharp doit tokeniser ligne par ligne. Mesures : `../aplinks/README-1.07.md`.
+
 ## Assembler et vérifier
 
 ```powershell

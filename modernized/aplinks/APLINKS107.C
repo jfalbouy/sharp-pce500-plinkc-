@@ -28,6 +28,11 @@
         and the 'Q' case: the one protocol addition, a mode query that the
         2026 driver sends after 'S' and older servers simply ignore.
         Sectors outside the active disk are refused (the 1.06 crashed).
+        -v timestamps every R/W (cycle, idle, io in ms).  Measured 2026-10-07
+        at 19200 bps: a tokenized LOAD runs at ~71.7 ms/sector against 68.8 ms
+        on the wire (96%); an ASCII LOAD at ~517 ms/sector, the Sharp's BASIC
+        tokenizer being the bottleneck.  Sending a sector in one write call
+        instead of 129 changed nothing, so it was not kept.
       - file paths use PATH_MAX-sized buffers (no 8.3 truncation)
       - fopen()/Win32/termios failures are checked, not assumed
       - hidden/system files are skipped like the original _A_NORMAL
@@ -115,6 +120,9 @@ const char *g_diskdir  = NULL;     /* -d : PC folder used as the virtual disk */
 FILE   *g_logfile      = NULL;     /* -l : tee the verbose log to this file    */
 int	g_uudecode     = 1;        /* auto-decode flushed .uue/.uux -> .obj     */
 int	g_uuencode     = 0;        /* --uuencode: at startup, encode disk .obj -> .uue */
+long	g_baud         = 0;        /* line speed, for the theoretical times of -v    */
+double	g_t_prev_end   = -1;       /* -v timing: end of the previous command (ms)    */
+double	g_t_prev_r     = -1;       /* -v timing: arrival of the previous 'R' (ms)    */
 
 /* Session history: a timestamped log of high-level actions (start, preload,
    per-connection read/write counts, files saved, disconnects).  Shown on
@@ -157,6 +165,7 @@ void append_char(char *, char);
 int  open_serial(const char *port, long baud);
 unsigned char get_com(void);
 void put_com(unsigned char);
+static double now_ms(void);
 void sread(int);
 void swrite(int);
 int serial_data_ready(void);
@@ -183,6 +192,7 @@ int main(int argc, char *argv[])
     int		    argn;
     time_t	    last_beat = 0;
     int		    dots_shown = 0;   /* a heartbeat '.' line is open */
+    double	    t_cmd = 0;        /* -v timing: arrival of the current command */
 
     print_banner( stdout );
     signal( SIGINT , on_sigint );      /* Ctrl-C: report disk state, then quit */
@@ -253,6 +263,12 @@ int main(int argc, char *argv[])
     if ( g_verbose ) {
 	printf( "Verbose ON: '.' = idle heartbeat (server alive, waiting);\n"
 		"each byte received from the pocket is logged below.\n" );
+	g_baud = baud;
+	vlog( "[t] %ld bps: 1 byte = %.2f ms on the wire; R = 3+129 bytes = %.1f ms, "
+	      "W = 133+1 bytes = %.1f ms.\n" ,
+	      baud , 10000.0 / baud , 132 * 10000.0 / baud , 134 * 10000.0 / baud );
+	vlog( "[t] per command: cycle = since previous R, idle = pocket silent after our "
+	      "last reply, io = this command's own transfer.\n" );
 	fflush( stdout );
     }
 
@@ -280,6 +296,7 @@ int main(int argc, char *argv[])
 	}
 
 	cmd = get_com();
+	t_cmd = now_ms();
 	/* Close any open heartbeat-dot line so each command starts fresh. */
 	if ( g_verbose && dots_shown ) {
 	    putchar( '\n' );
@@ -290,12 +307,21 @@ int main(int argc, char *argv[])
 		    sector_low = get_com();
 		    sector_high = get_com();
 		    sector = (sector_low & 0xff) + (sector_high & 0xff) * 256;
-		    if ( g_verbose ) vlog( "[R] read  sector %4d\n" , sector );
-		    else printf( "\rR" );
+		    if ( ! g_verbose ) printf( "\rR" );
 		    g_conn_reads++;  sread( sector );
 		    for( i = 0; i <= 128 ; i++ ) {
 			put_com( buffer[ i ] );
 		    }
+		    if ( g_verbose ) {
+			/* Logged AFTER the reply, so that printing does not delay it. */
+			double t_end = now_ms();
+			vlog( "[R] read  sector %4d   cycle %7.1f  idle %6.1f  io %6.1f ms\n" ,
+			      sector ,
+			      g_t_prev_r   < 0 ? 0.0 : t_cmd - g_t_prev_r ,
+			      g_t_prev_end < 0 ? 0.0 : t_cmd - g_t_prev_end ,
+			      t_end - t_cmd );
+		    }
+		    g_t_prev_r = t_cmd;
 		    break;
 		case 'W':
 		    sector_low = get_com();
@@ -305,7 +331,9 @@ int main(int argc, char *argv[])
 			buffer[i] = get_com();
 		    }
 		    if ( g_verbose ) {
-			vlog( "[W] write sector %4d%s\n" , sector ,
+			vlog( "[W] write sector %4d   idle %6.1f  io %6.1f ms%s\n" , sector ,
+			    g_t_prev_end < 0 ? 0.0 : t_cmd - g_t_prev_end ,
+			    now_ms() - t_cmd ,
 			    (buffer[129] & 0xff) == 0xff ? "" : "   (BAD end marker!)" );
 			fflush(stdout);
 		    } else printf( "\rW" );
@@ -369,6 +397,9 @@ int main(int argc, char *argv[])
 		    }
 		    break;
 	}
+	/* -v timing: a write call may return before the bytes have left the
+	   UART, so "idle" can include the end of our own transmission. */
+	if ( cmd != 0 ) g_t_prev_end = now_ms();
     } while (1);
 }
 
@@ -1213,6 +1244,17 @@ void put_com(unsigned char c)
     }
 }
 
+static double now_ms(void)
+/* 1.07 -v timing: a monotonic clock in milliseconds (sub-ms resolution). */
+{
+    static LARGE_INTEGER freq;
+    LARGE_INTEGER t;
+
+    if ( freq.QuadPart == 0 ) QueryPerformanceFrequency( &freq );
+    QueryPerformanceCounter( &t );
+    return (double)t.QuadPart * 1000.0 / (double)freq.QuadPart;
+}
+
 int serial_data_ready(void)
 /* Return 1 if at least one byte is waiting in the serial input queue. */
 {
@@ -1321,6 +1363,17 @@ void put_com(unsigned char c)
 	fprintf( stderr , "\nSerial write error\n" );
 	exit(1);
     }
+}
+
+static double now_ms(void)
+/* 1.07 -v timing, in milliseconds.  gettimeofday() rather than clock_gettime():
+   under strict -std=c99 the latter (and CLOCK_MONOTONIC) need _POSIX_C_SOURCE,
+   which this file does not define; <sys/time.h> is already used for select(). */
+{
+    struct timeval tv;
+
+    gettimeofday( &tv , NULL );
+    return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
 }
 
 int serial_data_ready(void)

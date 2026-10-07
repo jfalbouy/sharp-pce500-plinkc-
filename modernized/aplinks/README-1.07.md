@@ -42,6 +42,29 @@ Face à un serveur **ancien** (1.06, DOS 1.03), `'Q'` est ignoré : la 1.06 l'é
   possible, exactement comme avec la 1.62.
 - La réaction d'APLINKS for Win32 (binaire de 1997) à `'Q'` n'est pas connue.
 
+## Débit mesuré (2026-10-07) : transférer les programmes **tokenisés**
+
+Mesures sur PC-E500S à 19200 bauds, avec le journal horodaté de la 1.07 (`-v` : `cycle`
+depuis le `R` précédent, `idle` = silence du pocket après la réponse, `io` = transfert de la
+commande), sur le même programme de 20 Ko :
+
+| Opération | Par secteur | Total | Ce qui limite |
+|---|---|---|---|
+| `LOAD` du BASIC en texte ASCII (`,A`) | ~517 ms | ~75 s | la **tokenisation** sur le Sharp (~440 ms par secteur) |
+| `LOAD` du même programme tokenisé | **71,7 ms** | ~10-12 s | le fil (68,8 ms) : 96 % du maximum |
+| `SAVE` tokenisé | ~73 ms (4,4 ms d'attente) | ~10 s | le fil |
+
+- **Le conseil d'usage :** échanger les programmes BASIC **tokenisés**, par `SAVE "L:…"` sans
+  `,A`, ou en les convertissant en `.BSA` sur le PC (Sharp Basic Converter). C'est six fois
+  plus rapide. Le texte ASCII se transfère aussi lentement par PLINK que par `COM:` : c'est la
+  même limite, déjà mesurée par l'outil « Sharp transfert serial » (~305 octets/s).
+- **Pistes écartées par la mesure :**
+  - lire plusieurs secteurs en une requête : il reste 4 % à gagner ;
+  - envoyer un secteur en un seul appel d'écriture plutôt qu'octet par octet : aucune
+    différence mesurée, donc pas conservé.
+
+  19200 bauds étant la vitesse maximale du Sharp, la liaison est au plafond.
+
 ## Vérifié sur PC (2026-10-05)
 
 - Compilation sans avertissement : gcc 14.2 et clang, `-std=c99 -Wall -Wextra`.
