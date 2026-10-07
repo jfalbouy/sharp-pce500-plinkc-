@@ -1,4 +1,12 @@
-		org	$bf000
+		org	$be000
+;	2026-10-07 : l'objet est charge en 0BE000h (CALL &BE000), plus en 0BF000h.
+;	Avec la vitesse propre et INIT "L:T", il ne tenait plus dans les 3072
+;	octets de 0BF000h au plafond 0BFC00h de la zone langage machine ; un
+;	LOADM au-dela ecrase la zone systeme (s1_top, d_link...). Reserver donc
+;	7168 octets (01C00h) avant LOADM :
+;	    POKE &BFE03,&1A,&FD,&B,0,&1C,0 : CALL &FFFD8
+;	verifier.py controle que l'objet entier, table comprise, reste sous
+;	0BFC00h (la table est ajoutee apres END : aucun assert ne la voit).
 ;----------------------------------------------------------------------
 ;
 ;	Pocket Link Cache Device Driver ver 1.62
@@ -14,9 +22,12 @@
 ;
 ;	Mise a jour 2026 (J.-F. Albouy) - derive de PLINKC 1.62, voir NOTICE
 ;	  - constantes systeme tirees de pce500.inc ;
-;	  - desinstallation par CALL &BF000 "-U" (deliage + SET/KILL), qui
+;	  - desinstallation par CALL &BE000 "-U" (deliage + SET/KILL), qui
 ;	    reconnait aussi un bloc de la 1.62 d'origine ;
 ;	  - INIT "L:?" : etat du pilote (mode, numero de device, bloc) ;
+;	  - vitesse PROPRE au pilote (19200 par defaut), plus celle du COM: du
+;	    BASIC qu'un RESET remet a 1200 : INIT "L:Bnnnnn" la change, INIT
+;	    "L:T" teste la liaison (commande 'Q') ;
 ;	  - INIT "L:H" : version, taille, etat et commandes ; une option
 ;	    inconnue est signalee (la 1.62 videait le tampon sans rien dire) ;
 ;	  - INIT "L:2" : mode 256K ;
@@ -58,6 +69,8 @@ n_fcache:	equ	7		;	Nombre de secteurs dans le cache FAT
 n_dcache:	equ	1		;	Nombre de secteurs dans le cache de donnees
 dtop:		equ	44
 timeout:	equ	40000		; Delai d'attente (environ 1 seconde)
+def_ucr:	equ	$78			; Vitesse du pilote par defaut (2026) : 19200 bauds,
+					; sans parite, 8 bits, 1 stop (format de ucr / sio_baud)
 
 #DEFMACRO bsr
 	rel call	%0
@@ -82,7 +95,7 @@ entry:
 	pre	$32
 	sub	(bp_ram),%
 
-;	Argument de CALL : CALL &BF000 installe, CALL &BF000 "-U" desinstalle.
+;	Argument de CALL : CALL &BE000 installe, CALL &BE000 "-U" desinstalle.
 ;	Protocole d'UUENCODE (argskp) : le pointeur de ligne BASIC, pris sur la
 ;	pile U, y est RENDU avance jusqu'au terminateur ; quatre terminateurs
 ;	(0, CR, 1Ah, 0FFh) - sinon 'Syntax error' au retour dans BASIC.
@@ -287,6 +300,9 @@ short:		add	y,a
 	mv	x,dvname
 	mv	il,iocs_fmt_drive
 	call	icall		;	Initialisation des parametres
+	mv	x,etat		;	2026 : le pilote affiche son etat, vitesse
+	mv	il,iocs_fmt_drive	;	comprise (INIT "L:?")
+	call	icall
 
 	mv	il,ins_m-mb
 msend2:
@@ -341,7 +357,7 @@ icall:	callf	iocs_call
 	ret
 
 ;----------------------------------------------------------------------
-;		Desinstallation : CALL &BF000 "-U"
+;		Desinstallation : CALL &BE000 "-U"
 ;----------------------------------------------------------------------
 ;	Le pilote ne tient AUCUN vecteur au repos : il ne detourne la SIO que
 ;	le temps d'un appel (devmain la rend en jump00). Desinstaller, c'est
@@ -581,7 +597,11 @@ devmain:	pushu	imr				;Arretez l'interruption et reecrivez le vecteur de recepti
 		mv	[intv_sio_rx],x
 		popu	x
 		popu	imr
-		mv	(i_work3),[sio_baud]   ;Charger les parametres
+;	2026 : le pilote prend SA vitesse (drv_ucr), plus celle du COM: du BASIC
+;	(sio_baud, 0BFD33h) que la 1.62 suivait. Un RESET remet sio_baud a 1200
+;	bauds (03Ch) et desaccordait le pilote du PC ; drv_ucr est dans le bloc,
+;	qui survit au RESET, et le COM: des programmes BASIC n'est pas touche.
+		rel mv	(i_work3),[drv_ucr]	;Charger les parametres du pilote
 		and	(i_work3),$fd	   		;Ce force a 8 bits
 		pre	$22
 		ex	(i_work3),(ucr);Parametrage de la SIO & conservation du contenu precedent
@@ -647,13 +667,26 @@ st_ver:		db	'PLINKC 1.62-'
 		db	'0'+(blen/1000),'0'+((blen/100)%10),'0'+((blen/10)%10),'0'+(blen%10)
 		db	' bytes',$0d,$0a
 st_ver_e:
-st_cmd:		db	'INIT "L:x"  1/2/5 = 128K/256K/512K',$0d,$0a
-		db	'D disc, I clear, ? state, H help [key]'	;SANS CR LF : voir help
+st_cmd:		db	'INIT "L:x" 1/2/5=128/256/512K B=speed',$0d,$0a
+		db	'D disc, I clear, ? state, T test [key]'	;SANS CR LF : voir help
 st_cmd_e:
-st_dev:		db	', device '
+st_dev:		db	' dev '
 st_dev_e:
-st_blk:		db	', block &'
+st_blk:		db	' block &'
 st_blk_e:
+;	Vitesse (2026) : drv_ucr est l'octet ecrit dans ucr a chaque appel ;
+;	INIT "L:Bnnnnn" le change, il survit au RESET (il est dans le bloc).
+drv_ucr:	db	def_ucr
+st_bauds:	db	'19','96','48','24','12','60','30'	;Code de vitesse 7..1
+st_bnames:	db	'  300','  600',' 1200',' 2400',' 4800',' 9600','19200'
+st_bps:		db	'bps'
+st_sp:		db	' '
+st_spd:		db	'Speed:'
+st_spd_e:
+st_tok:		db	'Server OK: '
+st_tok_e:
+st_tno:		db	'No reply (speed? cable? APLINKS<1.07)',$0d,$0a
+st_tno_e:
 st_crlf:	db	$0d,$0a
 st_mode:	db	'1'				;Mode choisi par INIT "L:1"/"L:2"/"L:5"
 
@@ -718,8 +751,8 @@ st_nib:		and	a,$0f
 		jr	st_putc
 
 ;	st_pmode : le mode retenu, '128K', '256K' ou '512K'
-st_pmode:	rel mv	x,st_128
-		rel mv	a,[st_mode]
+st_pmode:	rel mv	a,[st_mode]
+st_pmodea:	rel mv	x,st_128			;Entree avec le mode dans A
 		cmp	a,'5'
 		jrnz	st_pmode_0
 		rel mv	x,st_512
@@ -728,6 +761,94 @@ st_pmode_0:	cmp	a,'2'
 		rel mv	x,st_256
 st_pmode_1:	mv	y,4
 		bsr	st_puts
+		ret
+
+;	st_pbaud : ' ' et la vitesse du pilote, '19200bps' ou ' 9600bps'...
+st_pbaud:	rel mv	x,st_sp
+		mv	y,1
+		bsr	st_puts
+		rel mv	a,[drv_ucr]
+		swap	a
+		and	a,$07				;Code de vitesse, 1..7
+		rel mv	x,st_bnames
+		mv	y,5
+st_pbaud_1:	dec	a
+		jrz	st_pbaud_2
+		add	x,y
+		jr	st_pbaud_1
+st_pbaud_2:	bsr	st_puts
+		rel mv	x,st_bps
+		mv	y,3
+		bsr	st_puts
+		ret
+
+;----------------------------------------------------------------------
+;		INIT "L:Bnnnnn" : vitesse du pilote (ajout 2026)
+;----------------------------------------------------------------------
+;	Les deux premiers chiffres suffisent a distinguer les sept vitesses.
+;	Prend effet a l'appel suivant (celui-ci tourne deja a l'ancienne).
+;	Rien n'est envoye au serveur.
+baud:		mv	a,[x+1]
+		mv	(i_work1),a
+		mv	a,[x+2]
+		mv	(i_work2),a
+		rel mv	y,st_bauds
+		mv	il,7				;Code de la vitesse essayee
+baud_1:		mv	a,[y++]
+		cmp	(i_work1),a
+		mv	a,[y++]				;MV ne touche pas aux drapeaux
+		jrnz	baud_2
+		cmp	(i_work2),a
+		jrz	baud_3
+baud_2:		dec	il
+		jrnz	baud_1
+		rel mv	x,st_unk			;Vitesse inconnue
+		mv	y,st_unk_e-st_unk
+		bsr	st_puts
+		rc
+		ret
+baud_3:		mv	a,il
+		swap	a
+		or	a,$08				;Sans parite, 8 bits, 1 stop
+		rel mv	[drv_ucr],a
+		rel mv	x,st_spd
+		mv	y,st_spd_e-st_spd
+		bsr	st_puts
+		bsr	st_pbaud
+		rel mv	x,st_crlf
+		mv	y,2
+		bsr	st_puts
+		rc
+		ret
+
+;----------------------------------------------------------------------
+;		INIT "L:T" : test de la liaison (ajout 2026)
+;----------------------------------------------------------------------
+;	Envoie 'Q' et attend la reponse (~1 s) : seul APLINKS 1.07 repond. Le
+;	pocket ne peut pas connaitre la vitesse du PC ; il constate seulement
+;	qu'on lui repond, ou non. Le mode du pilote n'est pas change.
+ltest:		mv	a,'Q'
+		bsr	send_one
+		bsr	receive_one_s
+		test	(flag),2
+		jrnz	ltest_n
+		mv	(i_work1),a			;Mode du serveur
+		rel mv	x,st_tok
+		mv	y,st_tok_e-st_tok
+		bsr	st_puts
+		mv	a,(i_work1)
+		bsr	st_pmodea
+		bsr	st_pbaud
+		rel mv	x,st_crlf
+		mv	y,2
+		bsr	st_puts
+		rc
+		ret
+ltest_n:	and	(flag),$fd			;Pas une erreur de liaison pour la ROM
+		rel mv	x,st_tno
+		mv	y,st_tno_e-st_tno
+		bsr	st_puts
+		rc
 		ret
 
 ;----------------------------------------------------------------------
@@ -767,6 +888,7 @@ status:		rel mv	x,st_l
 		mv	y,st_l_e-st_l
 		bsr	st_puts
 		bsr	st_pmode
+		bsr	st_pbaud			;' 19200bps' (2026)
 		rel mv	x,st_dev
 		mv	y,st_dev_e-st_dev
 		bsr	st_puts
@@ -793,7 +915,13 @@ init_0:		cmp	a,'?'
 		jrz	status
 		cmp	a,'H'
 		jrz	help
-		rel mv	x,mpb128
+		cmp	a,'B'
+		jrnz	init_1
+		rel jp	baud
+init_1:		cmp	a,'T'
+		jrnz	init_2
+		rel jp	ltest
+init_2:		rel mv	x,mpb128
 		cmp	a,'1'
 		jrz	cmd3f_15
 		rel mv	x,mpb256			;256K : ajout 2026
@@ -1283,7 +1411,7 @@ blen_162:	equ	2336		;Taille du bloc de PLINKC 1.62 d'origine ("Already exists" l
 ;----------------------------------------------------------------------
 ;		Verifications a l'assemblage
 ;----------------------------------------------------------------------
-		assert	entry = $bf000,'entry hors de l''org : relocation faussee'
+		assert	entry = $be000,'entry hors de l''org : relocation faussee'
 		assert	ihead-btop = $22,'en-tete IOCS hors de bloc+22h'
 		assert	dvname-btop = $2a,'nom de device hors de bloc+2Ah (-U le cherche la)'
 		assert	pg_m-mb < 256,'table mb au-dela de 256 octets (IL)'

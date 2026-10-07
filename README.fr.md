@@ -192,11 +192,15 @@ assemblé depuis la source même de Mizobata par
 [xasm2026-4](https://github.com/jfalbouy/XASM2026_CSharp), qui reproduit son
 assembleur A62. Le pilote installé garde le comportement de 1999 et ajoute :
 
-- la **désinstallation** : `CALL &BF000 "-U"` délie le pilote, puis affiche les
+- la **désinstallation** : `CALL &BE000 "-U"` délie le pilote, puis affiche les
   `SET`/`KILL` à taper (refus si un autre pilote est au-dessus, car ses blocs
   bougeraient) ;
 - **`INIT "L:?"`** (état du pilote), **`INIT "L:H"`** (version, taille, commandes,
-  avec une pause pour l'écran de 4 lignes), et le signalement d'une option inconnue ;
+  avec une pause pour l'écran de 4 lignes), **`INIT "L:T"`** (test de liaison), et le
+  signalement d'une option inconnue ;
+- une **vitesse propre au pilote**, 19200 bauds par défaut (`INIT "L:B9600"`… pour la
+  changer) : un RESET remet le `COM:` du BASIC à 1200 bauds, ce qui coupait la liaison
+  sans prévenir ; plus besoin de `POKE &BFD33`/`OPEN` ;
 - un mode disque **256 Ko** (`INIT "L:2"`), et une question de mode **`'Q'`** :
   après chaque `INIT`, le pocket adopte le mode qu'utilise réellement le serveur,
   au lieu de lire la FAT comme un répertoire quand ils ne sont pas d'accord.
@@ -211,8 +215,10 @@ déconnexion, deux cas où la 1.06 plantait.
 ```
 # PC :
 aplinks32_107 -p com3 -b 19200 -2 -d "MonDisque"
-# Pocket : CALL &BF000 pour installer le pilote, puis
-INIT "L:2" : INIT "L:H"
+# Pocket : réserver 7168 octets, charger et installer le pilote (chargé en 0BE000h)
+POKE &BFE03,&1A,&FD,&B,0,&1C,0 : CALL &FFFD8
+LOADM "PLINKC.OBJ" : CALL &BE000
+INIT "L:T" : INIT "L:2" : INIT "L:H"
 ```
 
 `reference/` conserve la source de l'auteur, qui redonne toujours à l'octet le

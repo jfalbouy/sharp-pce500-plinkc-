@@ -183,10 +183,13 @@ from Mizobata's own source with [xasm2026-4](https://github.com/jfalbouy/XASM202
 which reproduces his A62 assembler. The installed driver keeps the 1999 behavior
 and adds:
 
-- **uninstall**: `CALL &BF000 "-U"` unlinks the driver, then shows the `SET`/`KILL`
+- **uninstall**: `CALL &BE000 "-U"` unlinks the driver, then shows the `SET`/`KILL`
   to type (it refuses if another driver sits above it, whose blocks would move);
 - **`INIT "L:?"`** (driver state), **`INIT "L:H"`** (version, size, commands, with a
-  key pause on the 4-line screen), unknown options reported;
+  key pause on the 4-line screen), **`INIT "L:T"`** (link test), unknown options reported;
+- a **serial speed of its own**, 19200 bps by default (`INIT "L:B9600"`… to change it):
+  a RESET sets the BASIC `COM:` speed back to 1200 bps, which used to silently break the
+  link; no `POKE &BFD33`/`OPEN` is needed any more;
 - a **256 KB** disk mode (`INIT "L:2"`), and a mode query **`'Q'`**: after each
   `INIT`, the pocket adopts the mode the server really uses, instead of reading
   the FAT as a directory when they disagree.
@@ -200,8 +203,10 @@ checks FAT chains at disconnect, two cases where 1.06 crashed.
 ```
 # PC:
 aplinks32_107 -p com3 -b 19200 -2 -d "MyDisk"
-# Pocket: CALL &BF000 to install the driver, then
-INIT "L:2" : INIT "L:H"
+# Pocket: reserve 7168 bytes, load and install the driver (it loads at 0BE000h)
+POKE &BFE03,&1A,&FD,&B,0,&1C,0 : CALL &FFFD8
+LOADM "PLINKC.OBJ" : CALL &BE000
+INIT "L:T" : INIT "L:2" : INIT "L:H"
 ```
 
 `reference/` keeps the author's source, which still assembles byte-for-byte to the

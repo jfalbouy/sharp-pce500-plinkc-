@@ -1,1492 +1,1638 @@
-0BF000                   			org	$bf000
-0BF000                   	;----------------------------------------------------------------------
-0BF000                   	;
-0BF000                   	;	Pocket Link Cache Device Driver ver 1.62
-0BF000                   	;	Installation program
-0BF000                   	;	for PC-E500 series pocket computer
-0BF000                   	;	Copyright (c) 1996,1997,1999 by Daisuke Mizobata
-0BF000                   	;
-0BF000                   	;	based on PLINK.SYS ver 1.04
-0BF000                   	;	Copyright (c) 1990,93,94 N.Kon
-0BF000                   	;
-0BF000                   	;----------------------------------------------------------------------
-0BF000                   	;----------------------------------------------------------------------
-0BF000                   	;
-0BF000                   	;	Mise a jour 2026 (J.-F. Albouy) - derive de PLINKC 1.62, voir NOTICE
-0BF000                   	;	  - constantes systeme tirees de pce500.inc ;
-0BF000                   	;	  - desinstallation par CALL &BF000 "-U" (deliage + SET/KILL), qui
-0BF000                   	;	    reconnait aussi un bloc de la 1.62 d'origine ;
-0BF000                   	;	  - INIT "L:?" : etat du pilote (mode, numero de device, bloc) ;
-0BF000                   	;	  - INIT "L:H" : version, taille, etat et commandes ; une option
-0BF000                   	;	    inconnue est signalee (la 1.62 videait le tampon sans rien dire) ;
-0BF000                   	;	  - INIT "L:2" : mode 256K ;
-0BF000                   	;	  - apres chaque INIT "L:1"/"L:2"/"L:5", commande 'Q' : le serveur
-0BF000                   	;	    (APLINKS 1.07) rend son mode reel, que le pilote adopte ;
-0BF000                   	;	  - � deja installe � detaille : etat du pilote en place, autre
-0BF000                   	;	    version, bloc non chaine, ou "L:" pris par un autre pilote.
-0BF000                   	;	Protocole : seul ajout, la commande 'Q' (APLINKS 1.07 y repond, les
-0BF000                   	;	serveurs anciens l'ignorent) ; 'S' est inchange. Le corps ne differe de la 1.62 que par INIT "L:?",
-0BF000                   	;	INIT "L:2" et mpb256. verifier.py controle la table de relocation.
-0BF000                   	;	Assembleur : xasm2026-4 (dialecte A62 : rel, #defmacro, suborg, { }).
-0BF000                   	;	Reference d'origine : reference/plinkc.a62.asm -> PLINKC.OBJ.
-0BF000                   	;
-0BF000                   	;----------------------------------------------------------------------
-0BF000                   	;
-0BF000                   	
-0BF000                   	;----------------------------------------------------------------------
-0BF000                   	;		Definitions numeriques
-0BF000                   	;----------------------------------------------------------------------
-0BF000                   	;	Constantes systeme : pce500.inc (genere depuis les tables du
-0BF000                   	;	desassembleur SC62015Disassembler, noms identiques a ses sorties).
-0BF000                   	;	Correspondance avec les noms d'origine de PLINKC 1.62 :
-0BF000                   	;	  fcs -> fcs_call         iocs -> iocs_call      iroot -> d_link
-0BF000                   	;	  sio_rcv_vct -> intv_sio_rx   sio_param -> sio_baud
-0BF000                   	;	  base -> bp_ram   bx/cx/dx -> bl/cl/dl   cx+1 -> ch
-0BF000                   	;	  key_strobe_2 -> koh      sio_ctrl_reg -> ucr    sio_stat_reg -> usr
-0BF000                   	;	  sio_rx_reg -> rxd        sio_tx_reg -> txd      intr_mask_reg -> imr
-0BF000                   	;	  system_stat_reg -> ssr   btext -> txtbas        bdata -> datbas
-0BF000                   	;	  iwork -> iocsw           s1top -> s1_top        s1end -> s1_btm
-0BF000                   	;	  bworkp -> baswrk         $bfcbe -> softint
-0BF000                   	;	Retirees car inutilisees : iocs_fook, bpmax, keyvec, cdrv, rev.
-0BF000                   			include	pce500.inc
-0BF000                   	txtbas: equ 0CBH ; TEXT.BAS courant
-0BF000                   	datbas: equ 0CEH ; DATA.BAS courant
-0BF000                   	bl:     equ 0D4H ; registre BL / BX bas
-0BF000                   	cl:     equ 0D6H ; registre CL / CX bas
-0BF000                   	ch:     equ 0D7H ; registre CH / CX haut
-0BF000                   	dl:     equ 0D8H ; registre DL / DX bas
-0BF000                   	iocsw:  equ 0E6H ; zone de travail IOCS : recopie du pointeur [0BFD17h] (3 octets) (manuel technique, IOCS Special Technique p85-86)
-0BF000                   	bp_ram: equ 0ECH ; base pointer RAM interne
-0BF000                   	koh:    equ 0F1H ; Key Output Buffer haut (KOH) : pilote les pins KO8-KO15. Lecture/ecriture (manuel CPU p9-10)
-0BF000                   	ucr:    equ 0F7H ; UART Control Register : bit 7 BOE (break : force 0 sur TXD), bits 6-4 debit (0 arrete ET REINITIALISE l UART, 1 300, 2 600, 3 1200, 4 2400, 5 4800, 6 9600, 7 19200 bps), bits 3-2 parite (00 paire, 01 impaire, 1x aucune), bit 1 ...
-0BF000                   	usr:    equ 0F8H ; UART Status Register : bit 5 RXR caractere recu, bit 4 TXE emetteur au repos, bit 3 TXR tampon d'emission libre, bit 2 FE erreur de trame, bit 1 OE surcharge, bit 0 PE erreur de parite. RXR et TXR alimentent les bits RXRI/TXRI ...
-0BF000                   	rxd:    equ 0F9H ; UART Receive Buffer : le caractere recu ; le lire remet RXR a zero. LECTURE SEULE (manuel CPU p12-14)
-0BF000                   	txd:    equ 0FAH ; UART Transmit Buffer : le caractere a emettre ; peut etre ecrit pendant l'emission du precedent, TXR dit si le tampon est libre. ECRITURE SEULE (manuel CPU p14-15)
-0BF000                   	imr:    equ 0FBH ; Interrupt Mask Register : bit 7 IRM masque general, bit 6 EXM interruption EXTERNE (pin IRQ ; sur PC-E500 ce pin est cable au controleur de batterie, d'ou 'batterie faible' cote machine), bit 5 RXRM reception SIO, bit 4 TXRM em ...
-0BF000                   	ssr:    equ 0FFH ; System Status Register : bit 3 ONK touche ON enfoncee, bit 2 RSF (1 : on sort d'un HALT/OFF, 0 : le pin RESET a ete active), bit 1 CI entree cassette, bit 0 TEST entree de test. LECTURE SEULE (manuel CPU p20-21)
-0BF000                   	s1_top:           equ 0BFC15H ; top of S1 (nom et libelle de REGISTER.ASM) ; lead address du slot 0 = lecteur S1:, 080000h sur PC-E500S (3 octets ; manuel technique, Parameter of memory block device)
-0BF000                   	d_link:           equ 0BFCA2H ; device link pointer / IOCSH
-0BF000                   	softint:          equ 0BFCBEH ; bit 7 = break, bit 6 = batterie faible
-0BF000                   	intv_sio_rx:      equ 0BFCD5H ; vecteur interruption reception SIO, ISR/IMR bit 5 RXRM ; reception d'un octet SIO terminee (manuel technique, List of interrupt factor p91-92)
-0BF000                   	s1_btm:           equ 0BFCDEH ; bottom of S1 (nom et libelle de REGISTER.ASM) ; le manuel dit "last address of slot 0 (S1:) + 1" et La Feuille du Sharp en fait le pointeur de la 1re zone de travail, la pile utilisateur U : trois lectures d'une me ...
-0BF000                   	baswrk:           equ 0BFD0EH ; POINTEUR (3 octets) vers la zone de travail du BASIC, en memoire EXTERNE : il CONTIENT l'adresse, il N'EST PAS la zone. La ROM le recopie dans basptr par mvp (0D1h),[0BFD0Eh] en 0F98CAh. Nom de E. Kako (register.ls ...
-0BF000                   	sio_baud:         equ 0BFD33H ; reglage de la liaison SIO : bits 6-4 = vitesse (001 300, 010 600, 011 1200, 100 2400, 101 4800, 110 9600 bauds ; 000 aucune), bits 3-2 = parite (00 paire, 01 impaire, 1x aucune), bit 1 = longueur (0 : 8 bits, 1 : 7 ...
-0BF000                   	fcs_call:         equ 0FFFE4H ; FCS call entry
-0BF000                   	iocs_call:        equ 0FFFE8H ; IOCS call entry
-0BF000                   	fcs_write_block:          equ 04H   ; ecriture d'un bloc ((cl) = handle, X = source, Y = nombre d'octets ; retour X = adresse su
-0BF000                   	fcs_write_byte:           equ 06H   ; ecriture d'un octet ((cl) = handle, a = donnee ; retour b = nombre d'octets ecrits)
-0BF000                   	iocs_find_drive:          equ 00H   ; recherche du device et du lecteur d'apres le nom de lecteur (X = adresse du nom ; retour (
-0BF000                   	iocs_header_addr:         equ 01H   ; adresse du header d'apres le numero de device ((cl) = device ; retour X = adresse du heade
-0BF000                   	iocs_fmt_drive:           equ 04H   ; iocs_format_drive - formatage du device designe par le nom de lecteur (X = nom de lecteur suivi de la chaine d
-0BF000                   	dev_key:          equ 1H    ; device 1 (STDI:/KYBD:)
-0BF000                   	dev_memcard:      equ 6H    ; device 6 (S1:/S2:/S3:)
-0BF000                   	d1_key_read:      equ 43H   ; key_key_read - lecture d'une touche, apres traitement des touches SHIFT et CTRL (a bit 7 = 0 ...
-0BF000                   	d1_buffer_clear:  equ 45H   ; key_buffer_clear - vidage du tampon de balayage et du tampon clavier
-0BF000                   	d6_search_phys:   equ 41H   ; memcard_search_phys - adresse physique d'un bloc d'apres son nom ((ch) = slot 0/1/2, X = nom du bloc ...
-0BF000                   	d6_condense:      equ 47H   ; memcard_condense - compactage de l'espace libre des blocs memoire ((ch) = slot)
-0BF000                   	
-0BF000                   	sectsiz:	equ	128
-0BF000                   	cache_sect:	equ	sectsiz+1
-0BF000                   	cache_next:	equ	cache_sect+2
-0BF000                   	cache_size:	equ	cache_next+3
-0BF000                   	n_fcache:	equ	7		;	Nombre de secteurs dans le cache FAT
-0BF000                   	n_dcache:	equ	1		;	Nombre de secteurs dans le cache de donnees
-0BF000                   	dtop:		equ	44
-0BF000                   	timeout:	equ	40000		; Delai d'attente (environ 1 seconde)
-0BF000                   	
-0BF000                   	
-0BF000                   	;	Revision de la mise a jour 2026, definie UNE seule fois : banniere de
-0BF000                   	;	l'installateur et INIT "L:H". La 1.62 reste le numero de Mizobata.
-0BF000                   	
-0BF000                   	;
-0BF000                   	;	Installateur
-0BF000                   	;
-0BF000                   	
-0BF000                   	pntr	dest,bottom,mdf,offset
-0BF000                   	byte	argu				;	Drapeau d'argument : 0 installer, 1 desinstaller
-0BF000                   	
-0BF000                   	;	ENTRY DOIT RESTER A L'ORG : la boucle de relocation part de btop-entry,
-0BF000                   	;	et la table generee par les 'rel' compte ses ecarts depuis l'org.
-0BF000                   	entry:
-0BF000 32                		pre	$32
-0BF001 49 EC 0D          		sub	(bp_ram),%
-0BF004                   	
-0BF004                   	;	Argument de CALL : CALL &BF000 installe, CALL &BF000 "-U" desinstalle.
-0BF004                   	;	Protocole d'UUENCODE (argskp) : le pointeur de ligne BASIC, pris sur la
-0BF004                   	;	pile U, y est RENDU avance jusqu'au terminateur ; quatre terminateurs
-0BF004                   	;	(0, CR, 1Ah, 0FFh) - sinon 'Syntax error' au retour dans BASIC.
-0BF004 3C                		popu	x
-0BF005 CC 0C 00          		mv	(argu),0
-0BF008 90 24             	arg_lp:	mv	a,[x++]
-0BF00A 60 00             		cmp	a,0
-0BF00C 18 1F             		jrz	arg_end
-0BF00E 60 0D             		cmp	a,$0d
-0BF010 18 1B             		jrz	arg_end
-0BF012 60 1A             		cmp	a,$1a
-0BF014 18 17             		jrz	arg_end
-0BF016 60 FF             		cmp	a,$ff
-0BF018 18 13             		jrz	arg_end
-0BF01A 60 2D             		cmp	a,'-'
-0BF01C 1B 16             		jrnz	arg_lp
-0BF01E 90 04             		mv	a,[x]
-0BF020 60 75             		cmp	a,'u'
-0BF022 18 04             		jrz	arg_u
-0BF024 60 55             		cmp	a,'U'
-0BF026 1B 20             		jrnz	arg_lp
-0BF028 CC 0C 01          	arg_u:	mv	(argu),1
-0BF02B 13 25             		jr	arg_lp
-0BF02D 7C 04             	arg_end:	dec	x
-0BF02F 2C                		pushu	x
-0BF030                   	
-0BF030 0C A1 F2 0B       		mv	x,title
-0BF034 0D 64 00 00       		mv	y,title_e-title
-0BF038 04 AB F1          		call	puts
-0BF03B 65 0C 01          		test	(argu),1
-0BF03E 15 E0 F1          		jpnz	uninst
-0BF041                   	
-0BF041                   	;	Deja installe ? Le bloc PLINK.SYS d'abord, puis "L:" (2026 : la 1.62
-0BF041                   	;	refusait sur l'un ou l'autre sans dire lequel ni ou).
-0BF041 32                		pre	$32
-0BF042 CC D7 00          		mv	(ch),0			;	Slot 0 = S1: (fonction 41h)
-0BF045 0C 96 F4 0B       		mv	x,btop+1
-0BF049 09 41             		mv	il,d6_search_phys
-0BF04B 04 D7 F1          		call	memd			;	Y = bloc, carry si absent
-0BF04E 1C 4A             		jrc	ex_sans_bloc
-0BF050 A5 00             		mv	(dest),y
-0BF052 0C BF F4 0B       		mv	x,dvname
-0BF056 09 00             		mv	il,iocs_find_drive
-0BF058 04 DB F1          		call	icall			;	Recherche de nom de lecteur
-0BF05B 1C 28             		jrc	ex_non_lie		;	Bloc present, mais "L:" n'est plus chaine
-0BF05D 84 00             		mv	x,(dest)
-0BF05F 95 84 11          		mv	y,[x+$11]
-0BF062 A5 03             		mv	(bottom),y
-0BF064 0D C0 0B 00       		mv	y,blen
-0BF068 D7 05 03          		cmpp	(bottom),y
-0BF06B 1A 0E             		jrnz	ex_autre		;	Un autre PLINK.SYS (1.62 d'origine...)
-0BF06D 0C 52 F3 0B       		mv	x,etat			;	Notre version : INIT "L:?" lui fait
-0BF071 09 04             		mv	il,iocs_fmt_drive	;	afficher son etat (mode, device, bloc)
-0BF073 04 DB F1          		call	icall
-0BF076 09 00             		mv	il,exi_m-mb
-0BF078 02 98 F1          		jp	msend
-0BF07B                   	ex_autre:
-0BF07B 0C 56 F3 0B       		mv	x,exo_m
-0BF07F 0D 21 00 00       		mv	y,exo_e-exo_m
-0BF083 12 28             		jr	ex_fin
-0BF085                   	ex_non_lie:
-0BF085 0C 77 F3 0B       		mv	x,exu_m
-0BF089 0D 41 00 00       		mv	y,exu_e-exu_m
-0BF08D 04 AB F1          		call	puts
-0BF090 0C 24 F3 0B       		mv	x,sk_m
-0BF094 0D 2E 00 00       		mv	y,sk_e-sk_m
-0BF098 12 13             		jr	ex_fin
-0BF09A                   	ex_sans_bloc:
-0BF09A 0C BF F4 0B       		mv	x,dvname
-0BF09E 09 00             		mv	il,iocs_find_drive
-0BF0A0 04 DB F1          		call	icall
-0BF0A3 1C 0E             		jrc	ex_libre		;	Ni bloc ni "L:" : on installe
-0BF0A5 0C B8 F3 0B       		mv	x,exl_m
-0BF0A9 0D 23 00 00       		mv	y,exl_e-exl_m
-0BF0AD 04 AB F1          	ex_fin:	call	puts
-0BF0B0 02 9B F1          		jp	fin
-0BF0B3                   	ex_libre:
-0BF0B3                   	
-0BF0B3 8D A2 FC 0B       		mv	y,[d_link]			;	Debut de la liste d'en-tete IOCS d'origine
-0BF0B7 AD B7 F4 0B       		mv	[ihead],y
-0BF0BB                   	
-0BF0BB                   	;	Definir le numero de peripherique
-0BF0BB 32                		pre	$32
-0BF0BC CC D6 09          		mv	(cl),10-1			;	Numero de peripherique planifie 10
-0BF0BF                   	_blk00001_t:
-0BF0BF 32                			pre	$32
-0BF0C0 6D D6             			inc	(cl)
-0BF0C2 09 01             			mv	il,iocs_header_addr
-0BF0C4 04 DB F1          			call	icall
-0BF0C7 1F 0A             			jrnc	_blk00001_t
-0BF0C9                   	_blk00001_e:
-0BF0C9 32                		pre	$32
-0BF0CA D8 BA F4 0B D6    		mv	[devno],(cl)		;	Definir le numero de peripherique
-0BF0CF                   	
-0BF0CF 09 47             		mv	il,d6_condense
-0BF0D1 04 D7 F1          		call	memd
-0BF0D4                   	
-0BF0D4                   	;	Verifiez l'emplacement d'installation
-0BF0D4 8C 15 FC 0B       		mv	x,[s1_top]
-0BF0D8 95 84 12          		mv	y,[x+$12]
-0BF0DB 45 45             	loop1:	add	x,y
-0BF0DD A4 00             		mv	(dest),x
-0BF0DF 90 04             		mv	a,[x]
-0BF0E1 60 FB             		cmp	a,$fb
-0BF0E3 1A 12             		jrnz	chksize
-0BF0E5 90 84 0C          		mv	a,[x+$0c]
-0BF0E8 64 0C             		test	a,$0c
-0BF0EA                   	
-0BF0EA 95 84 11          	loop2:	mv	y,[x+$11]
-0BF0ED 1B 14             		jrnz	loop1
-0BF0EF 45 45             		add	x,y
-0BF0F1 90 04             		mv	a,[x]
-0BF0F3 60 FB             		cmp	a,$fb
-0BF0F5 19 0D             		jrz	loop2
-0BF0F7                   	
-0BF0F7                   	chksize:
-0BF0F7                   	;	 Verifiez si le programme depasse la limite de 64 Ko
-0BF0F7 0B 84 06          		mv	i,prgend-btop		;	Taille du conducteur seulement
-0BF0FA 82 00             		mv	ba,(dest)
-0BF0FC 44 23             		add	ba,i
-0BF0FE 09 34             		mv	il,pg_m-mb
-0BF100 1C 8A             		jrc	msend2
-0BF102                   	
-0BF102                   	;	Verifier la capacite de la memoire
-0BF102 A4 03             		mv	(bottom),x
-0BF104 8D DE FC 0B       		mv	y,[s1_btm]
-0BF108 4D 54             		sub	y,x
-0BF10A 7C 05             		dec	y
-0BF10C 0A C0 0B          		mv	ba,blen
-0BF10F 4D 52             		sub	y,ba
-0BF111 09 12             		mv	il,mem_m-mb
-0BF113 1C 77             		jrc	msend2
-0BF115                   	
-0BF115                   	;	Bloc memoire Stagger
-0BF115 84 03             		mv	x,(bottom)
-0BF117 85 00             		mv	y,(dest)
-0BF119 4D 45             		sub	x,y
-0BF11B 6C 04             		inc	x				;	x = nombre d'octets a deplacer
-0BF11D 2F                		pushu	imr			;	Desactiver l'interruption
-0BF11E B6 37             		mv	[--s],u			;	pushs	u
-0BF120 85 03             		mv	y,(bottom)
-0BF122 86 03             		mv	u,(bottom)
-0BF124 45 62             		add	u,ba
-0BF126 6C 06             		inc	u
-0BF128 6C 05             		inc	y
-0BF12A                   	_blk00002_t:
-0BF12A 90 35             			mv	a,[--y]
-0BF12C 28                			pushu	a		;	mv	[--u],a
-0BF12D 7C 04             			dec	x
-0BF12F 1B 07             		jrnz	_blk00002_t
-0BF131                   	_blk00002_e:
-0BF131                   	
-0BF131                   	;	Chauffeur de transfert
-0BF131 0E 95 F4 0B       		mv	u,btop
-0BF135 84 00             		mv	x,(dest)
-0BF137 B6 37             		mv	[--s],u			;	pushs	u
-0BF139 4D 64             		sub	u,x
-0BF13B A6 09             		mv	(offset),u
-0BF13D 96 27             		mv	u,[s++]			;	pops	u
-0BF13F 0B 84 06          		mv	i,prgend-btop	;	Taille du conducteur seulement
-0BF142                   	_blk00003_t:
-0BF142 38                			popu	a		;	mv	a,[u++]
-0BF143 B0 24             			mv	[x++],a
-0BF145 7C 03             			dec	i
-0BF147 1B 07             			jrnz	_blk00003_t
-0BF149                   	_blk00003_e:
-0BF149                   	
-0BF149                   	;	Relocaliser le traitement
-0BF149 85 00             		mv	y,(dest)
-0BF14B 0A 95 04          		mv	ba,btop-entry
-0BF14E 4D 52             		sub	y,ba
-0BF150                   	_blk00004_t:
-0BF150 38                			popu	a		;	mv	a,[u++]
-0BF151 60 FF             			cmp	a,$ff
-0BF153 18 1F             			jrz	_blk00004_e
-0BF155 09 02             			mv	il,2
-0BF157 64 80             			test	a,$80
-0BF159 18 02             			jrz	word
-0BF15B 6C 01             			inc	il
-0BF15D 70 7F             	word:		and	a,$7f
-0BF15F 60 7E             			cmp	a,$7e
-0BF161 1A 04             			jrnz	short
-0BF163 3A                			popu	ba		;	mv	ba,[u++]
-0BF164 45 52             			add	y,ba
-0BF166 0A                			db	$0a			;	Passer les 2 octets suivants
-0BF167 45 50             	short:		add	y,a		
-0BF169 E2 05 06          			mvp	(mdf),[y]
-0BF16C 5C 06 09          			sbcl	(mdf),(offset)
-0BF16F EA 05 06          			mvp	[y],(mdf)
-0BF172 13 24             			jr	_blk00004_t
-0BF174                   	_blk00004_e:
-0BF174                   	
-0BF174 96 27             		mv	u,[s++]			;	pops	u
-0BF176                   	
-0BF176                   	;	S'inscrire a la liste IOCS
-0BF176 84 00             		mv	x,(dest)
-0BF178 08 22             		mv	a,ihead-btop
-0BF17A 45 40             		add	x,a
-0BF17C AC A2 FC 0B       		mv	[d_link],x
-0BF180                   	
-0BF180 3F                		popu	imr
-0BF181 0C BF F4 0B       		mv	x,dvname
-0BF185 09 04             		mv	il,iocs_fmt_drive
-0BF187 04 DB F1          		call	icall		;	Initialisation des parametres
-0BF18A                   	
-0BF18A 09 27             		mv	il,ins_m-mb
-0BF18C                   	msend2:
-0BF18C                   	
-0BF18C 2B                		pushu	i
-0BF18D 04 B6 F1          		call	linkbas		;	Corrigez les pointeurs de BTEXT $ et BDATA $ en BASIC
-0BF190 08 00             		mv	a,0
-0BF192 32                		pre	$32
-0BF193 B8 80 E6 3A       		mv	[(iocsw)+$3a],a	;	Detachez RAMFILE
-0BF197 3B                		popu	i
-0BF198 04 A1 F1          	msend:	call	putm2
-0BF19B 32                	fin:	pre	$32
-0BF19C 41 EC 0D          		add	(bp_ram),%
-0BF19F 9F                		rc				;	Carry CLAIR : arme, BASIC repondrait 'Syntax error'
-0BF1A0 07                		retf
-0BF1A1                   	
-0BF1A1                   	;	putm2 : message de la table mb (IL = son ecart, 1er octet = longueur)
-0BF1A1                   	;	puts  : X = texte, Y = longueur, a l'ecran (handle 0)
-0BF1A1 0C 4F F4 0B       	putm2:	mv	x,mb
-0BF1A5 45 43             		add	x,i
-0BF1A7 91 24             		mv	il,[x++]
-0BF1A9 FD 53             		mv	y,i
-0BF1AB 32                	puts:	pre	$32
-0BF1AC CC D6 00          		mv	(cl),0
-0BF1AF 09 04             		mv	il,fcs_write_block
-0BF1B1 05 E4 FF 0F       		callf	fcs_call
-0BF1B5 06                		ret
-0BF1B6                   	
-0BF1B6                   	linkbas:
-0BF1B6                   	;	Pointeur de BTEXT $ et BDATA $
-0BF1B6 32                		pre	$32
-0BF1B7 8C 0E FD 0B       		mv	x,[baswrk]
-0BF1BB 08 72             		mv	a,$72
-0BF1BD 45 40             		add	x,a
-0BF1BF 04 D1 F1          		call	bsearch
-0BF1C2 1C 0C             		jrc	bomb
-0BF1C4 32                		pre	$32
-0BF1C5 A5 CB             		mv	(txtbas),y
-0BF1C7 04 D1 F1          		call	bsearch
-0BF1CA 1C 04             		jrc	bomb
-0BF1CC 32                		pre	$32
-0BF1CD A5 CE             		mv	(datbas),y
-0BF1CF 06                		ret
-0BF1D0 FF                	bomb:	reset
-0BF1D1                   	
-0BF1D1 09 41             	bsearch:mv	il,d6_search_phys
-0BF1D3 32                	memd2:	pre	$32
-0BF1D4 E0 24 D7          		mv	(ch),[x++]
-0BF1D7 32                	memd:	pre	$32
-0BF1D8 CC D6 06          		mv	(cl),dev_memcard
-0BF1DB 05 E8 FF 0F       	icall:	callf	iocs_call
-0BF1DF 06                		ret
-0BF1E0                   	
-0BF1E0                   	;----------------------------------------------------------------------
-0BF1E0                   	;		Desinstallation : CALL &BF000 "-U"
-0BF1E0                   	;----------------------------------------------------------------------
-0BF1E0                   	;	Le pilote ne tient AUCUN vecteur au repos : il ne detourne la SIO que
-0BF1E0                   	;	le temps d'un appel (devmain la rend en jump00). Desinstaller, c'est
-0BF1E0                   	;	donc delier son en-tete de la chaine des devices, puis faire taper
-0BF1E0                   	;	SET et KILL a l'utilisateur : ce sont des commandes de MODE DIRECT,
-0BF1E0                   	;	qu'un programme ne peut pas executer.
-0BF1E0                   	;	Le bloc se retrouve par la CHAINE DES BLOCS de S1:, pas par d_link :
-0BF1E0                   	;	si un amorcage a perdu le maillon, le bloc est toujours la.
-0BF1E0                   	uninst:
-0BF1E0 8C 15 FC 0B       		mv	x,[s1_top]
-0BF1E4 95 84 12          		mv	y,[x+$12]
-0BF1E7 45 45             	un_blk:	add	x,y
-0BF1E9 90 04             		mv	a,[x]
-0BF1EB 60 FB             		cmp	a,$fb
-0BF1ED 1A 90             		jrnz	un_absent		;	Fin de la chaine des blocs
-0BF1EF A4 00             		mv	(dest),x
-0BF1F1 0D 95 F4 0B       		mv	y,btop			;	Signature + nom, lus dans l'image (jamais relogee)
-0BF1F5 09 0C             		mv	il,12
-0BF1F7 04 93 F2          		call	compare
-0BF1FA 84 00             		mv	x,(dest)
-0BF1FC 95 84 11          		mv	y,[x+$11]		;	Taille du bloc (MV ne touche pas aux drapeaux)
-0BF1FF 1B 1A             		jrnz	un_blk
-0BF201                   	
-0BF201                   	;	Le deliage ne touche qu'a l'en-tete IOCS : on reconnait donc le bloc a
-0BF201                   	;	cet en-tete, pas a sa taille (qui change a chaque version) - le nom de
-0BF201                   	;	device 'L:',0 a sa place (bloc+2Ah), donc le lien suivant en bloc+22h.
-0BF201                   	;	C'est la disposition de la 1.62 d'origine et de toutes les versions
-0BF201                   	;	2026 ; aucune ne tient de vecteur au repos.
-0BF201 08 2A             		mv	a,dvname-btop
-0BF203 45 40             		add	x,a
-0BF205 0D BF F4 0B       		mv	y,dvname		;	'L:',0 de l'image
-0BF209 09 03             		mv	il,3
-0BF20B 04 93 F2          		call	compare
-0BF20E 1A 79             		jrnz	un_autre
-0BF210                   	
-0BF210                   	;	Aucun pilote AU-DESSUS du notre. Le KILL de PLINK.SYS ferait descendre
-0BF210                   	;	tous les blocs suivants SANS relocation : sans dommage pour TEXT.BAS et
-0BF210                   	;	DATA.BAS (la ROM les recale), fatal pour un autre pilote (mesure du
-0BF210                   	;	2026-09-25 avec BASEXT.SYS au-dessus : la machine tombe). Meme regle de
-0BF210                   	;	reconnaissance que l'installateur : signature $fb et bits $0c de
-0BF210                   	;	l'attribut.
-0BF210 84 00             		mv	x,(dest)
-0BF212 95 84 11          	un_sup:	mv	y,[x+$11]
-0BF215 45 45             		add	x,y
-0BF217 90 04             		mv	a,[x]
-0BF219 60 FB             		cmp	a,$fb
-0BF21B 1A 29             		jrnz	un_delier		;	Fin de chaine : rien au-dessus
-0BF21D 90 84 0C          		mv	a,[x+$0c]
-0BF220 64 0C             		test	a,$0c
-0BF222 19 12             		jrz	un_sup
-0BF224 A4 03             		mv	(bottom),x
-0BF226 0C 17 F4 0B       		mv	x,sup_m
-0BF22A 0D 21 00 00       		mv	y,sup_e-sup_m
-0BF22E 04 AB F1          		call	puts
-0BF231 84 03             		mv	x,(bottom)
-0BF233 6C 04             		inc	x			;	Nom 8.3 du pilote fautif (11 octets)
-0BF235 0D 0B 00 00       		mv	y,11
-0BF239 04 AB F1          		call	puts
-0BF23C 0C 38 F4 0B       		mv	x,sup2_m
-0BF240 0D 17 00 00       		mv	y,sup2_e-sup2_m
-0BF244 12 33             		jr	un_fin
-0BF246                   	
-0BF246                   	;	Delier notre en-tete IOCS (bloc + ihead-btop), s'il est encore chaine
-0BF246                   	un_delier:
-0BF246 84 00             		mv	x,(dest)
-0BF248 08 22             		mv	a,ihead-btop
-0BF24A 45 40             		add	x,a
-0BF24C A4 03             		mv	(bottom),x		;	Notre en-tete
-0BF24E 0D A2 FC 0B       		mv	y,d_link
-0BF252 94 05             	un_lnk:	mv	x,[y]
-0BF254 6C 04             		inc	x
-0BF256 18 19             		jrz	un_ok			;	$fffff : fin de chaine, plus chaine
-0BF258 7C 04             		dec	x
-0BF25A 18 15             		jrz	un_ok			;	0 : chaine vide
-0BF25C A5 09             		mv	(offset),y		;	Emplacement du lien qui designe x
-0BF25E A4 06             		mv	(mdf),x
-0BF260 85 03             		mv	y,(bottom)
-0BF262 D7 05 06          		cmpp	(mdf),y
-0BF265 18 04             		jrz	un_trouve
-0BF267 FD 54             		mv	y,x			;	Le lien suivant est le 1er champ de l'en-tete
-0BF269 13 19             		jr	un_lnk
-0BF26B                   	un_trouve:
-0BF26B 94 04             		mv	x,[x]			;	Notre successeur...
-0BF26D 85 09             		mv	y,(offset)
-0BF26F B4 05             		mv	[y],x			;	...prend notre place
-0BF271 0C 05 F3 0B       	un_ok:	mv	x,uok_m
-0BF275 0D 4D 00 00       		mv	y,uok_e-uok_m
-0BF279 04 AB F1          	un_fin:	call	puts
-0BF27C 02 9B F1          		jp	fin
-0BF27F                   	
-0BF27F                   	un_absent:
-0BF27F 0C DB F3 0B       		mv	x,abs_m
-0BF283 0D 17 00 00       		mv	y,abs_e-abs_m
-0BF287 13 10             		jr	un_fin
-0BF289                   	un_autre:
-0BF289 0C F2 F3 0B       		mv	x,oth_m
-0BF28D 0D 25 00 00       		mv	y,oth_e-oth_m
-0BF291 13 1A             		jr	un_fin
-0BF293                   	
-0BF293                   	;	compare : IL octets de [x] et de [y] ; Z si identiques
-0BF293 E0 24 06          	compare:	mv	(mdf),[x++]
-0BF296 90 25             		mv	a,[y++]
-0BF298 63 06             		cmp	(mdf),a
-0BF29A 1A 04             		jrnz	compare_e
-0BF29C 7C 01             		dec	il
-0BF29E 1B 0D             		jrnz	compare
-0BF2A0 06                	compare_e:	ret
-0BF2A1                   	
-0BF2A1 50 4C 49 4E 4B 43 	title:	db	'PLINKC ver 1.62 by Daisuke Mizobata',$0d,$0a
-0BF2A7 20 76 65 72 20 31 	
-0BF2AD 2E 36 32 20 62 79 	
-0BF2B3 20 44 61 69 73 75 	
-0BF2B9 6B 65 20 4D 69 7A 	
-0BF2BF 6F 62 61 74 61 0D 	
-0BF2C5 0A                	
-0BF2C6 62 61 73 65 64 20 		db	'based on PLINK ver 1.04 by N.Kon',$0d,$0a
-0BF2CC 6F 6E 20 50 4C 49 	
-0BF2D2 4E 4B 20 76 65 72 	
-0BF2D8 20 31 2E 30 34 20 	
-0BF2DE 62 79 20 4E 2E 4B 	
-0BF2E4 6F 6E 0D 0A       	
-0BF2E8 55 70 64 61 74 65 		db	'Update '
-0BF2EE 20                	
-0BF2EF 32 30 32 36 2E 31 		db	'2026.1'
-0BF2F5 20 62 79 20 4A 2D 		db	' by J-F.Albouy',$0d,$0a
-0BF2FB 46 2E 41 6C 62 6F 	
-0BF301 75 79 0D 0A       	
-0BF305                   	title_e:
-0BF305                   	
-0BF305                   	;	Messages de la desinstallation (affiches par puts : X, Y = longueur)
-0BF305 55 6E 69 6E 73 74 	uok_m:	db	'Uninstalled. To free memory :',$0d,$0a
-0BF30B 61 6C 6C 65 64 2E 	
-0BF311 20 54 6F 20 66 72 	
-0BF317 65 65 20 6D 65 6D 	
-0BF31D 6F 72 79 20 3A 0D 	
-0BF323 0A                	
-0BF324 53 45 54 20 20 22 	sk_m:	db	'SET  "S1:PLINK.SYS"," "',$0d,$0a
-0BF32A 53 31 3A 50 4C 49 	
-0BF330 4E 4B 2E 53 59 53 	
-0BF336 22 2C 22 20 22 0D 	
-0BF33C 0A                	
-0BF33D 4B 49 4C 4C 20 22 		db	'KILL "S1:PLINK.SYS"',$0d,$0a
-0BF343 53 31 3A 50 4C 49 	
-0BF349 4E 4B 2E 53 59 53 	
-0BF34F 22 0D 0A          	
-0BF352                   	sk_e:
-0BF352                   	uok_e:
-0BF352                   	
-0BF352                   	;	Messages de « deja installe » (2026)
-0BF352 4C 3A 3F 00       	etat:	db	'L:?',0			;	Argument d'INIT : etat du pilote installe
-0BF356 41 6C 72 65 61 64 	exo_m:	db	'Already exists (other version).',$0d,$0a
-0BF35C 79 20 65 78 69 73 	
-0BF362 74 73 20 28 6F 74 	
-0BF368 68 65 72 20 76 65 	
-0BF36E 72 73 69 6F 6E 29 	
-0BF374 2E 0D 0A          	
-0BF377                   	exo_e:
-0BF377 50 4C 49 4E 4B 2E 	exu_m:	db	'PLINK.SYS in S1: but not linked.',$0d,$0a
-0BF37D 53 59 53 20 69 6E 	
-0BF383 20 53 31 3A 20 62 	
-0BF389 75 74 20 6E 6F 74 	
-0BF38F 20 6C 69 6E 6B 65 	
-0BF395 64 2E 0D 0A       	
-0BF399 46 72 65 65 20 69 		db	'Free it, then install again :',$0d,$0a
-0BF39F 74 2C 20 74 68 65 	
-0BF3A5 6E 20 69 6E 73 74 	
-0BF3AB 61 6C 6C 20 61 67 	
-0BF3B1 61 69 6E 20 3A 0D 	
-0BF3B7 0A                	
-0BF3B8                   	exu_e:
-0BF3B8 45 72 72 6F 72 3A 	exl_m:	db	'Error: L: used by another driver.',$0d,$0a
-0BF3BE 20 4C 3A 20 75 73 	
-0BF3C4 65 64 20 62 79 20 	
-0BF3CA 61 6E 6F 74 68 65 	
-0BF3D0 72 20 64 72 69 76 	
-0BF3D6 65 72 2E 0D 0A    	
-0BF3DB                   	exl_e:
-0BF3DB 50 4C 49 4E 4B 2E 	abs_m:	db	'PLINK.SYS not in S1:.',$0d,$0a
-0BF3E1 53 59 53 20 6E 6F 	
-0BF3E7 74 20 69 6E 20 53 	
-0BF3ED 31 3A 2E 0D 0A    	
-0BF3F2                   	abs_e:
-0BF3F2 45 72 72 6F 72 3A 	oth_m:	db	'Error: PLINK.SYS without L: header.',$0d,$0a
-0BF3F8 20 50 4C 49 4E 4B 	
-0BF3FE 2E 53 59 53 20 77 	
-0BF404 69 74 68 6F 75 74 	
-0BF40A 20 4C 3A 20 68 65 	
-0BF410 61 64 65 72 2E 0D 	
-0BF416 0A                	
-0BF417                   	oth_e:
-0BF417 45 72 72 6F 72 3A 	sup_m:	db	'Error: driver above PLINK.SYS :',$0d,$0a
-0BF41D 20 64 72 69 76 65 	
-0BF423 72 20 61 62 6F 76 	
-0BF429 65 20 50 4C 49 4E 	
-0BF42F 4B 2E 53 59 53 20 	
-0BF435 3A 0D 0A          	
-0BF438                   	sup_e:
-0BF438 0D 0A 55 6E 69 6E 	sup2_m:	db	$0d,$0a,'Uninstall it first.',$0d,$0a
-0BF43E 73 74 61 6C 6C 20 	
-0BF444 69 74 20 66 69 72 	
-0BF44A 73 74 2E 0D 0A    	
-0BF44F                   	sup2_e:
-0BF44F                   	
-0BF44F                   	;	Messages de l'installation (affiches par putm2 : IL = ecart depuis mb,
-0BF44F                   	;	1er octet = longueur ; la table doit tenir sous 256 octets)
-0BF44F                   	mb:
-0BF44F 11 41 6C 72 65 61 	exi_m:	db	17,'Already exists.',$0d,$0a
-0BF455 64 79 20 65 78 69 	
-0BF45B 73 74 73 2E 0D 0A 	
-0BF461 14 4E 6F 74 20 65 	mem_m:	db	20,'Not enough memory.',$0d,$0a
-0BF467 6E 6F 75 67 68 20 	
-0BF46D 6D 65 6D 6F 72 79 	
-0BF473 2E 0D 0A          	
-0BF476 0C 49 6E 73 74 61 	ins_m:	db	12,'Installed.',$0d,$0a
-0BF47C 6C 6C 65 64 2E 0D 	
-0BF482 0A                	
-0BF483 11 4F 76 65 72 20 	pg_m:	db	17,'Over two pages.',$0d,$0a
-0BF489 74 77 6F 20 70 61 	
-0BF48F 67 65 73 2E 0D 0A 	
-0BF495                   	
-0BF495                   	;----------------------------------------------------------------------
-0BF495                   	;		En-tete du fichier d'en-tete de l'appareil
-0BF495                   	;----------------------------------------------------------------------
-0BF495 FB 50 4C 49 4E 4B 	btop:	db	$fb,'PLINK   SYS'		;Nom du bloc de peripherique
-0BF49B 20 20 20 53 59 53 	
-0BF4A1 25                			db	$25						;Attributs de bloc de memoire
-0BF4A2 00 00 00 00       			dw	0,0						;Date et heure
-0BF4A6 C0 0B 00          			dp	blen					;Nombre d'octets dans le bloc memoire
-0BF4A9 00 00             			dw	0
-0BF4AB C0 0B 00          			dp	blen					;Nombre d'octets de l'entite de fichier
-0BF4AE C0 0B 00          			dp	blen					;Nombre d'octets dans le bloc memoire
-0BF4B1 00 00 00 00 00 00 			dp	0,0
-0BF4B7                   	;----------------------------------------------------------------------
-0BF4B7                   	;		En-tete du pilote de peripherique
-0BF4B7                   	;----------------------------------------------------------------------
-0BF4B7 00 00 00          	ihead:		dp	0			;Adresse du prochain en-tete de pilote de peripherique
-0BF4BA 00                	devno:		db	0			;Numero d'appareil (variable)
-0BF4BB 83                			db	$83				;Attribut de peripherique (identique a E :)
-0BF4BC 01 F5 0B          			rel dp	devmain		;Adresse du corps du pilote de peripherique
-0BF4BF 4C 3A 00          	dvname:		db	'L:',0		;Nom de l'appareil
-0BF4C2                   	;----------------------------------------------------------------------
-0BF4C2                   	;		Media parameter block
-0BF4C2                   	;----------------------------------------------------------------------
-0BF4C2                   	;Version de 128 Ko
-0BF4C2 F0                	mpb128:		db	$f0			;Descripteur de media (peut etre approprie)
-0BF4C3 80 00             			dw	sectsiz			;Nombre d'octets par secteur
-0BF4C5 03                			db	4-1				;(Nombre d'octets par secteur / 32) -1
-0BF4C6 02                			db	2				;log 2 (nombre d'octets par secteur / 32)
-0BF4C7 00                			db	0				;???
-0BF4C8 01                			db	1				;???
-0BF4C9 00 00             			dw	0				;Premier numero de secteur de zone FAT
-0BF4CB 08                			db	8				;???
-0BF4CC 80 00             			dw	128				;Nombre maximum de fichiers stockables
-0BF4CE 2C 00             			dw	dtop			;Numero du secteur de depart de la zone de donnees
-0BF4D0 D5 03             			dw	980+1			;Nombre total de secteurs dans la zone de donnees + 1
-0BF4D2 0C                			db	12				;Nombre total de secteurs dans la zone FAT
-0BF4D3 0C 00             			dw	12				;Premier numero de secteur de la zone DIR
-0BF4D5                   	;Donnees referencees dans DS
-0BF4D5 0C 00             			dw	12				;Premier numero de secteur de la zone DIR
-0BF4D7                   	;Version de 512 Ko
-0BF4D7 F0                	mpb512:		db	$f0
-0BF4D8 80 00             			dw	sectsiz
-0BF4DA 03                			db	4-1
-0BF4DB 02                			db	2
-0BF4DC 00                			db	0
-0BF4DD 01                			db	1
-0BF4DE 00 00             			dw	0
-0BF4E0 08                			db	8
-0BF4E1 80 00             			dw	128
-0BF4E3 50 00             			dw	80			;Numero du secteur de depart de la zone de donnees
-0BF4E5 B1 0F             			dw	4016+1		;Nombre total de secteurs dans la zone de donnees + 1
-0BF4E7 30                			db	48			;Nombre total de secteurs dans la zone FAT
-0BF4E8 30 00             			dw	48			;Premier numero de secteur de la zone DIR
-0BF4EA                   	;
-0BF4EA 30 00             			dw	48
-0BF4EC                   	;Version de 256 Ko (ajout 2026). Meme regle que les deux autres : FAT,
-0BF4EC                   	;puis 32 secteurs de repertoire (128 fichiers), puis les donnees, pour
-0BF4EC                   	;256K/128 = 2048 secteurs : 24 + 32 + 1992. FAT de 12 bits : 24 secteurs
-0BF4EC                   	;= 2048 entrees >= 1992+2. Doit egaler set_geometry('2') d'APLINKS 1.07.
-0BF4EC F0                	mpb256:		db	$f0
-0BF4ED 80 00             			dw	sectsiz
-0BF4EF 03                			db	4-1
-0BF4F0 02                			db	2
-0BF4F1 00                			db	0
-0BF4F2 01                			db	1
-0BF4F3 00 00             			dw	0
-0BF4F5 08                			db	8
-0BF4F6 80 00             			dw	128
-0BF4F8 38 00             			dw	56			;Numero du secteur de depart de la zone de donnees
-0BF4FA C9 07             			dw	1992+1		;Nombre total de secteurs dans la zone de donnees + 1
-0BF4FC 18                			db	24			;Nombre total de secteurs dans la zone FAT
-0BF4FD 18 00             			dw	24			;Premier numero de secteur de la zone DIR
-0BF4FF                   	;
-0BF4FF 18 00             			dw	24
-0BF501                   	;----------------------------------------------------------------------
-0BF501                   	;		Corps
-0BF501                   	;----------------------------------------------------------------------
-0BF501                   	suborg		0
-0BF501                   	byte		i_work1,i_work2
-0BF501                   	word		sect_num,sect_num2
-0BF501                   	byte		flag,rxdata,i_work3,subko
-0BF501                   	pntr		cachep,vct_rsv,before
-0BF501 2F                	devmain:	pushu	imr				;Arretez l'interruption et reecrivez le vecteur de reception SIO
-0BF502 2C                			pushu	x
-0BF503 30                			pre	$30
-0BF504 49 EC 13          			sub	(bp_ram),%
-0BF507 8C D5 FC 0B       			mv	x,[intv_sio_rx]
-0BF50B A4 0D             			mv	(vct_rsv),x	
-0BF50D 0C 25 FA 0B       			rel mv	x,rcv
-0BF511 AC D5 FC 0B       			mv	[intv_sio_rx],x
-0BF515 3C                			popu	x
-0BF516 3F                			popu	imr
-0BF517 D0 08 33 FD 0B    			mv	(i_work3),[sio_baud]   ;Charger les parametres
-0BF51C 71 08 FD          			and	(i_work3),$fd	   		;Ce force a 8 bits
-0BF51F 22                			pre	$22
-0BF520 C0 08 F7          			ex	(i_work3),(ucr);Parametrage de la SIO & conservation du contenu precedent
-0BF523 22                			pre	$22
-0BF524 C8 09 F1          			mv	(subko),(koh)	;Enregistrer KOH
-0BF527 30                			pre	$30
-0BF528 79 F1 60          			or	(koh),$60		;Activer DTR, RR
-0BF52B                   	;
-0BF52B 04 55 F8          		rel call	main
-0BF52E                   	;
-0BF52E                   	_blk00005_t:
-0BF52E 30                				pre	$30
-0BF52F 65 F8 10          				test	(usr),$10
-0BF532 19 06             				jrz	_blk00005_t				;Attendre la fin de la transmission
-0BF534                   	_blk00005_e:
-0BF534 30                			pre	$30
-0BF535 C8 F7 08          			mv	(ucr),(i_work3)	;Restaurer le parametre SIO
-0BF538 30                			pre	$30
-0BF539 C8 F1 09          			mv	(koh),(subko)		;Restaurer KOH
-0BF53C 65 06 02          			test	(flag),2
-0BF53F 18 0E             			jrz	jump00						;[BRK] a ete presse?
-0BF541 08 02             			mv	a,$02
-0BF543 1C 0A             			jrc	jump00
-0BF545 66 BE FC 0B 80    	brkloop:	test	[softint],$80		;Attendez que la pause soit liberee
-0BF54A 1B 07             			jrnz	brkloop
-0BF54C 08 FF             			mv	a,$ff						;Traitement en cas de pression
-0BF54E 97                			sc
-0BF54F 2F                	jump00:		pushu	imr					;Restaurer le vecteur de reception SIO
-0BF550 2C                			pushu	x
-0BF551 84 0D             			mv	x,(vct_rsv)
-0BF553 AC D5 FC 0B       			mv	[intv_sio_rx],x
-0BF557 30                			pre	$30
-0BF558 47 EC 13          			pmdf	(bp_ram),%
-0BF55B 3C                			popu	x
-0BF55C 3F                			popu	imr
-0BF55D 07                			retf
-0BF55E                   	;----------------------------------------------------------------------
-0BF55E                   	;		Diverses commandes
-0BF55E                   	;----------------------------------------------------------------------
-0BF55E                   	;----------------------------------------------------------------------
-0BF55E                   	;		INIT "L:?" : etat du pilote (ajout 2026)
-0BF55E                   	;----------------------------------------------------------------------
-0BF55E                   	;	Affiche 'L: 128K, device 10, block &80018'. Rien n'est envoye au
-0BF55E                   	;	serveur et les tampons ne sont pas touches (pas de buffer_clr).
-0BF55E 4C 3A 20          	st_l:		db	'L: '
-0BF561                   	st_l_e:
-0BF561 31 32 38 4B       	st_128:		db	'128K'
-0BF565 35 31 32 4B       	st_512:		db	'512K'
-0BF569 32 35 36 4B       	st_256:		db	'256K'
-0BF56D 4E 6F 20 32 35 36 	st_no256:	db	'No 256K reply from server: 128K.',$0d,$0a
-0BF573 4B 20 72 65 70 6C 	
-0BF579 79 20 66 72 6F 6D 	
-0BF57F 20 73 65 72 76 65 	
-0BF585 72 3A 20 31 32 38 	
-0BF58B 4B 2E 0D 0A       	
-0BF58F                   	st_no256_e:
-0BF58F 53 65 72 76 65 72 	st_srv:		db	'Server mode: '
-0BF595 20 6D 6F 64 65 3A 	
-0BF59B 20                	
-0BF59C                   	st_srv_e:
-0BF59C 55 6E 6B 6E 6F 77 	st_unk:		db	'Unknown INIT option. Help: INIT "L:H"',$0d,$0a
-0BF5A2 6E 20 49 4E 49 54 	
-0BF5A8 20 6F 70 74 69 6F 	
-0BF5AE 6E 2E 20 48 65 6C 	
-0BF5B4 70 3A 20 49 4E 49 	
-0BF5BA 54 20 22 4C 3A 48 	
-0BF5C0 22 0D 0A          	
-0BF5C3                   	st_unk_e:
-0BF5C3                   	;	INIT "L:H" : la taille du bloc est ecrite en decimal A L'ASSEMBLAGE
-0BF5C3                   	;	(blen est une constante ; % entre deux valeurs = modulo). PARENTHESES
-0BF5C3                   	;	OBLIGATOIRES : le modulo lie MOINS fort que '+' dans ce langage (comme
-0BF5C3                   	;	oprlevel_set du moteur C), donc '0'+blen%10 vaudrait ('0'+blen)%10.
-0BF5C3 50 4C 49 4E 4B 43 	st_ver:		db	'PLINKC 1.62-'
-0BF5C9 20 31 2E 36 32 2D 	
-0BF5CF 32 30 32 36 2E 31 		db	'2026.1'
-0BF5D5 2C 20             			db	', '
-0BF5D7 33 30 30 38       			db	'0'+(blen/1000),'0'+((blen/100)%10),'0'+((blen/10)%10),'0'+(blen%10)
-0BF5DB 20 62 79 74 65 73 			db	' bytes',$0d,$0a
-0BF5E1 0D 0A             	
-0BF5E3                   	st_ver_e:
-0BF5E3 49 4E 49 54 20 22 	st_cmd:		db	'INIT "L:x"  1/2/5 = 128K/256K/512K',$0d,$0a
-0BF5E9 4C 3A 78 22 20 20 	
-0BF5EF 31 2F 32 2F 35 20 	
-0BF5F5 3D 20 31 32 38 4B 	
-0BF5FB 2F 32 35 36 4B 2F 	
-0BF601 35 31 32 4B 0D 0A 	
-0BF607 44 20 64 69 73 63 			db	'D disc, I clear, ? state, H help [key]'	;SANS CR LF : voir help
-0BF60D 2C 20 49 20 63 6C 	
-0BF613 65 61 72 2C 20 3F 	
-0BF619 20 73 74 61 74 65 	
-0BF61F 2C 20 48 20 68 65 	
-0BF625 6C 70 20 5B 6B 65 	
-0BF62B 79 5D             	
-0BF62D                   	st_cmd_e:
-0BF62D 2C 20 64 65 76 69 	st_dev:		db	', device '
-0BF633 63 65 20          	
-0BF636                   	st_dev_e:
-0BF636 2C 20 62 6C 6F 63 	st_blk:		db	', block &'
-0BF63C 6B 20 26          	
-0BF63F                   	st_blk_e:
-0BF63F 0D 0A             	st_crlf:	db	$0d,$0a
-0BF641 31                	st_mode:	db	'1'				;Mode choisi par INIT "L:1"/"L:2"/"L:5"
-0BF642                   	
-0BF642                   	;	cmd3f_set : adopter la geometrie X (mpb) pour le mode A ('1','2','5')
-0BF642 A8 41 F6 0B       	cmd3f_set:	rel mv	[st_mode],a
-0BF646 AC 50 F8 0B       			rel mv	[getmpb+1],x
-0BF64A 92 84 0C          			mv	ba,[x+$c]
-0BF64D AA D7 FA 0B       			rel mv	[secpatch+1],ba
-0BF651 06                			ret
-0BF652                   	
-0BF652                   	;	st_puts : X = texte, Y = longueur, a l'ecran (handle 0)
-0BF652 30                	st_puts:	pre	$30
-0BF653 CC D6 00          			mv	(cl),0
-0BF656 09 04             			mv	il,fcs_write_block
-0BF658 05 E4 FF 0F       			callf	fcs_call
-0BF65C 06                			ret
-0BF65D                   	
-0BF65D                   	;	st_dec : A en decimal, sans zero de tete
-0BF65D A0 00             	st_dec:		mv	(i_work1),a			;Reste a ecrire
-0BF65F CC 01 00          			mv	(i_work2),0			;Aucun chiffre ecrit encore
-0BF662 08 64             			mv	a,100
-0BF664 04 71 F6          		rel call	st_digit
-0BF667 08 0A             			mv	a,10
-0BF669 04 71 F6          		rel call	st_digit
-0BF66C CC 01 01          			mv	(i_work2),1			;Les unites s'ecrivent toujours
-0BF66F 08 01             			mv	a,1
-0BF671 09 30             	st_digit:	mv	il,'0'
-0BF673 63 00             	st_digit_1:	cmp	(i_work1),a
-0BF675 1C 06             			jrc	st_digit_2			;Reste < poids
-0BF677 4B 00             			sub	(i_work1),a
-0BF679 6C 01             			inc	il
-0BF67B 13 0A             			jr	st_digit_1
-0BF67D FD 01             	st_digit_2:	mv	a,il
-0BF67F 60 30             			cmp	a,'0'
-0BF681 1A 05             			jrnz	st_digit_3
-0BF683 65 01 01          			test	(i_work2),1
-0BF686 18 0D             			jrz	st_ret				;Zero de tete : pas ecrit
-0BF688 CC 01 01          	st_digit_3:	mv	(i_work2),1
-0BF68B                   	;	st_putc : A a l'ecran (handle 0)
-0BF68B 30                	st_putc:	pre	$30
-0BF68C CC D6 00          			mv	(cl),0
-0BF68F 09 06             			mv	il,fcs_write_byte
-0BF691 05 E4 FF 0F       			callf	fcs_call
-0BF695 06                	st_ret:		ret
-0BF696                   	
-0BF696                   	;	st_hex5 : X en hexadecimal sur 5 chiffres
-0BF696 A4 10             	st_hex5:	mv	(before),x
-0BF698 80 12             			mv	a,(before+2)
-0BF69A 04 AA F6          		rel call	st_nib
-0BF69D 80 11             			mv	a,(before+1)
-0BF69F 04 A4 F6          		rel call	st_hex2
-0BF6A2 80 10             			mv	a,(before)
-0BF6A4 28                	st_hex2:	pushu	a
-0BF6A5 EE                			swap	a
-0BF6A6 04 AA F6          		rel call	st_nib
-0BF6A9 38                			popu	a
-0BF6AA 70 0F             	st_nib:		and	a,$0f
-0BF6AC 40 30             			add	a,'0'
-0BF6AE 60 3A             			cmp	a,'9'+1
-0BF6B0 1D 27             			jrc	st_putc
-0BF6B2 40 07             			add	a,'A'-'9'-1
-0BF6B4 13 2B             			jr	st_putc
-0BF6B6                   	
-0BF6B6                   	;	st_pmode : le mode retenu, '128K', '256K' ou '512K'
-0BF6B6 0C 61 F5 0B       	st_pmode:	rel mv	x,st_128
-0BF6BA 88 41 F6 0B       			rel mv	a,[st_mode]
-0BF6BE 60 35             			cmp	a,'5'
-0BF6C0 1A 04             			jrnz	st_pmode_0
-0BF6C2 0C 65 F5 0B       			rel mv	x,st_512
-0BF6C6 60 32             	st_pmode_0:	cmp	a,'2'
-0BF6C8 1A 04             			jrnz	st_pmode_1
-0BF6CA 0C 69 F5 0B       			rel mv	x,st_256
-0BF6CE 0D 04 00 00       	st_pmode_1:	mv	y,4
-0BF6D2 04 52 F6          		rel call	st_puts
-0BF6D5 06                			ret
-0BF6D6                   	
-0BF6D6                   	;----------------------------------------------------------------------
-0BF6D6                   	;		INIT "L:H" : version, taille, etat, commandes (ajout 2026)
-0BF6D6                   	;----------------------------------------------------------------------
-0BF6D6 0C C3 F5 0B       	help:		rel mv	x,st_ver
-0BF6DA 0D 20 00 00       			mv	y,st_ver_e-st_ver
-0BF6DE 04 52 F6          		rel call	st_puts
-0BF6E1 04 1A F7          		rel call	status
-0BF6E4 0C E3 F5 0B       			rel mv	x,st_cmd
-0BF6E8 0D 4A 00 00       			mv	y,st_cmd_e-st_cmd
-0BF6EC 04 52 F6          		rel call	st_puts
-0BF6EF                   	;	Attente d'une touche (2026-10-06). L'ecran a 4 lignes : la 4e est ecrite
-0BF6EF                   	;	SANS retour a la ligne, sinon l'ecran defilerait avant la pause et la
-0BF6EF                   	;	1re serait deja perdue. Tampon clavier vide d'abord (touche d'avance),
-0BF6EF                   	;	puis IOCS clavier 43h, a bit 7 = 1 : attente en basse consommation.
-0BF6EF 30                			pre	$30
-0BF6F0 CC D6 01          			mv	(cl),dev_key
-0BF6F3 30                			pre	$30
-0BF6F4 CC D7 00          			mv	(ch),0
-0BF6F7 09 45             			mv	il,d1_buffer_clear
-0BF6F9 05 E8 FF 0F       			callf	iocs_call
-0BF6FD 30                			pre	$30
-0BF6FE CC D6 01          			mv	(cl),dev_key
-0BF701 30                			pre	$30
-0BF702 CC D7 00          			mv	(ch),0
-0BF705 08 80             			mv	a,$80
-0BF707 09 43             			mv	il,d1_key_read
-0BF709 05 E8 FF 0F       			callf	iocs_call
-0BF70D 0C 3F F6 0B       			rel mv	x,st_crlf
-0BF711 0D 02 00 00       			mv	y,2
-0BF715 04 52 F6          		rel call	st_puts
-0BF718 9F                			rc
-0BF719 06                			ret
-0BF71A                   	
-0BF71A 0C 5E F5 0B       	status:		rel mv	x,st_l
-0BF71E 0D 03 00 00       			mv	y,st_l_e-st_l
-0BF722 04 52 F6          		rel call	st_puts
-0BF725 04 B6 F6          		rel call	st_pmode
-0BF728 0C 2D F6 0B       			rel mv	x,st_dev
-0BF72C 0D 09 00 00       			mv	y,st_dev_e-st_dev
-0BF730 04 52 F6          		rel call	st_puts
-0BF733 88 BA F4 0B       			rel mv	a,[devno]
-0BF737 04 5D F6          		rel call	st_dec
-0BF73A 0C 36 F6 0B       			rel mv	x,st_blk
-0BF73E 0D 09 00 00       			mv	y,st_blk_e-st_blk
-0BF742 04 52 F6          		rel call	st_puts
-0BF745 0C 95 F4 0B       			rel mv	x,btop				;Adresse du bloc installe (relogee)
-0BF749 04 96 F6          		rel call	st_hex5
-0BF74C 0C 3F F6 0B       			rel mv	x,st_crlf
-0BF750 0D 02 00 00       			mv	y,2
-0BF754 04 52 F6          		rel call	st_puts
-0BF757 9F                			rc
-0BF758 06                			ret
-0BF759                   	
-0BF759 90 04             	init:		mv	a,[x]
-0BF75B 60 61             			cmp	a,'a'				;Minuscule -> majuscule (ajout 2026)
-0BF75D 1C 06             			jrc	init_0
-0BF75F 60 7B             			cmp	a,'z'+1
-0BF761 1E 02             			jrnc	init_0
-0BF763 70 DF             			and	a,$df
-0BF765 60 3F             	init_0:		cmp	a,'?'
-0BF767 19 4F             			jrz	status
-0BF769 60 48             			cmp	a,'H'
-0BF76B 19 97             			jrz	help
-0BF76D 0C C2 F4 0B       			rel mv	x,mpb128
-0BF771 60 31             			cmp	a,'1'
-0BF773 18 10             			jrz	cmd3f_15
-0BF775 0C EC F4 0B       			rel mv	x,mpb256			;256K : ajout 2026
-0BF779 60 32             			cmp	a,'2'
-0BF77B 18 08             			jrz	cmd3f_15
-0BF77D 0C D7 F4 0B       			rel mv	x,mpb512
-0BF781 60 35             			cmp	a,'5'
-0BF783 1A 78             			jrnz	cmd3f_d
-0BF785                   	;	INIT "L:1", "L:2", "L:5" : comme la 1.62, 'S' puis le mode, sans reponse.
-0BF785                   	;	Puis (2026) 'Q' : le serveur rend le mode qu'il utilise REELLEMENT et on
-0BF785                   	;	l'adopte. Un serveur qui garde un disque precharge dans un autre mode
-0BF785                   	;	ferait sinon lire la FAT comme un repertoire, et demander des secteurs
-0BF785                   	;	absurdes (APLINKS 1.06 en est tombe, le 2026-10-06). Sans reponse dans
-0BF785                   	;	le delai (APLINKS 1.06, DOS 1.03 : 'Q' ignore), on garde le mode
-0BF785                   	;	demande, comme la 1.62 - sauf 256K, que ces serveurs ne connaissent
-0BF785                   	;	pas : 128K (ce qu'ils font eux-memes d'un disque vide), et on le dit.
-0BF785 A0 01             	cmd3f_15:	mv	(i_work2),a			;Mode demande
-0BF787 04 42 F6          		rel call	cmd3f_set
-0BF78A 04 7A FA          		rel call	check_sect
-0BF78D 08 53             			mv	a,'S'
-0BF78F 04 DF F9          		rel call	send_one
-0BF792 80 01             			mv	a,(i_work2)
-0BF794 04 DF F9          		rel call	send_one
-0BF797 08 51             			mv	a,'Q'				;Quel mode utilises-tu ?
-0BF799 04 DF F9          		rel call	send_one
-0BF79C 04 01 FA          		rel call	receive_one_s
-0BF79F 65 06 02          			test	(flag),2
-0BF7A2 1A 3A             			jrnz	cmd3f_q0			;Pas de reponse : serveur ancien
-0BF7A4 0C D7 F4 0B       			rel mv	x,mpb512
-0BF7A8 60 35             			cmp	a,'5'
-0BF7AA 18 10             			jrz	cmd3f_q1
-0BF7AC 0C EC F4 0B       			rel mv	x,mpb256
-0BF7B0 60 32             			cmp	a,'2'
-0BF7B2 18 08             			jrz	cmd3f_q1
-0BF7B4 0C C2 F4 0B       			rel mv	x,mpb128
-0BF7B8 60 31             			cmp	a,'1'
-0BF7BA 1A 7C             			jrnz	cmd3f_2				;Reponse inconnue : on garde
-0BF7BC 63 01             	cmd3f_q1:	cmp	(i_work2),a
-0BF7BE 18 78             			jrz	cmd3f_2				;Le serveur est dans le mode demande
-0BF7C0 04 42 F6          		rel call	cmd3f_set
-0BF7C3 0C 8F F5 0B       			rel mv	x,st_srv			;...et on le dit
-0BF7C7 0D 0D 00 00       			mv	y,st_srv_e-st_srv
-0BF7CB 04 52 F6          		rel call	st_puts
-0BF7CE 04 B6 F6          		rel call	st_pmode
-0BF7D1 0C 3F F6 0B       			rel mv	x,st_crlf
-0BF7D5 0D 02 00 00       			mv	y,2
-0BF7D9 04 52 F6          		rel call	st_puts
-0BF7DC 12 5A             			jr	cmd3f_2
-0BF7DE 71 06 FD          	cmd3f_q0:	and	(flag),$fd			;Pas une erreur de liaison : on continue
-0BF7E1 80 01             			mv	a,(i_work2)
-0BF7E3 60 32             			cmp	a,'2'
-0BF7E5 1A 51             			jrnz	cmd3f_2				;128K ou 512K : on garde
-0BF7E7 0C 6D F5 0B       			rel mv	x,st_no256
-0BF7EB 0D 22 00 00       			mv	y,st_no256_e-st_no256
-0BF7EF 04 52 F6          		rel call	st_puts
-0BF7F2 08 31             			mv	a,'1'
-0BF7F4 0C C2 F4 0B       			rel mv	x,mpb128
-0BF7F8 04 42 F6          		rel call	cmd3f_set
-0BF7FB 12 3B             			jr	cmd3f_2
-0BF7FD 60 44             	cmd3f_d:	cmp	a,'D'
-0BF7FF 1A 11             			jrnz	cmd3f_i
-0BF801 04 7A FA          		rel call	check_sect
-0BF804 08 44             			mv	a,'D'
-0BF806 04 DF F9          		rel call	send_one
-0BF809 0B 12 0F          			mv	i,$12+(receive_one_s-receive_one-2)*$100
-0BF80C AB F0 F9 0B       			rel mv	[receive_one],i		;jr receive_one_s
-0BF810 12 26             			jr	cmd3f_2
-0BF812 60 49             	cmd3f_i:	cmp	a,'I'
-0BF814 1A 0D             			jrnz	cmd3f_x
-0BF816 09 82             			mv	il,130					;"Je" commande
-0BF818 08 00             			mv	a,0						;Envoyer 130 pieces de 00h
-0BF81A                   	cmd3f_i1:
-0BF81A 04 DF F9          		rel call	send_one
-0BF81D 7C 01             			dec	il
-0BF81F 1B 07             			jrnz	cmd3f_i1
-0BF821 12 15             			jr	cmd3f_2
-0BF823                   	;	Ni 1/2/5, ni D/I/?/H (ajout 2026). Option vide (INIT "L:", et l'appel de
-0BF823                   	;	l'installateur avec "L:",0) : comme la 1.62, vider le tampon. Lettre
-0BF823                   	;	inconnue : la 1.62 videait aussi le tampon, sans rien dire ; on le dit,
-0BF823                   	;	et on ne touche a rien.
-0BF823 60 21             	cmd3f_x:	cmp	a,' '+1				;0, CR, 1Ah, espace... : option vide
-0BF825 1C 11             			jrc	cmd3f_2
-0BF827 60 FF             			cmp	a,$ff
-0BF829 18 0D             			jrz	cmd3f_2
-0BF82B 0C 9C F5 0B       			rel mv	x,st_unk
-0BF82F 0D 27 00 00       			mv	y,st_unk_e-st_unk
-0BF833 04 52 F6          		rel call	st_puts
-0BF836 9F                			rc
-0BF837 06                			ret
-0BF838                   	cmd3f_2:
-0BF838 04 2E FA          		rel call	buffer_clr
-0BF83B                   			;bsr	root
-0BF83B                   			;ret
-0BF83B                   	
-0BF83B                   	root:
-0BF83B 04 46 F8          		rel call	getroot
-0BF83E B3 84 0A          			mv	[x+$a],i
-0BF841 B2 84 11          			mv	[x+$11],ba
-0BF844 9F                			rc
-0BF845 06                			ret
-0BF846                   	
-0BF846                   	getroot:
-0BF846 04 4F F8          		rel call	getmpb
-0BF849 92 84 13          			mv	ba,[x+$13]
-0BF84C 09 80             			mv	il,128
-0BF84E 06                			ret
-0BF84F                   	
-0BF84F 0C C2 F4 0B       	getmpb:		rel mv	x,mpb128
-0BF853 9F                			rc
-0BF854 06                			ret
-0BF855                   	;----------------------------------------------------------------------
-0BF855                   	;		Corps de chaque processus
-0BF855                   	;----------------------------------------------------------------------
-0BF855 CC 06 00          	main:		mv	(flag),0		;Effacer le drapeau
-0BF858 FD 01             			mv	a,il				;Analyse de commande
-0BF85A 60 10             			cmp	a,$10
-0BF85C 1A 02             			jrnz	cmd11
-0BF85E 9F                			rc						;Traitement de commande 10h
-0BF85F 06                			ret
-0BF860 60 11             	cmd11:		cmp	a,$11
-0BF862 19 15             			jrz	getmpb				;Traitement de la commande 11h
-0BF864 60 12             			cmp	a,$12
-0BF866 18 6D             			jrz	read_sect			;Traitement de commande 12h
-0BF868 60 13             			cmp	a,$13
-0BF86A 18 A4             			jrz	write_sect			;Traitement de la commande 13h
-0BF86C 60 14             			cmp	a,$14
-0BF86E 18 A0             			jrz	write_sect			;Traitement de la commande 14h
-0BF870 60 15             			cmp	a,$15
-0BF872 18 61             			jrz	read_sect			;Traitement de commande 15h
-0BF874 60 16             			cmp	a,$16
-0BF876 1A 05             			jrnz	cmd17
-0BF878 0A 00 00          			mv	ba,0				;Traitement de commande 16h
-0BF87B 9F                			rc
-0BF87C 06                			ret
-0BF87D 60 17             	cmd17:		cmp	a,$17
-0BF87F 1A 41             			jrnz	cmd18
-0BF881 8A 53 00 0C       			rel mv	ba,[sect_number]	;Traitement de commande 17h
-0BF885 30                			pre	$30
-0BF886 D6 02 D4          			cmpw	(bl),ba
-0BF889 18 2C             			jrz	same_sect				;c'etait le meme secteur que le tampon
-0BF88B 04 7A FA          		rel call	check_sect
-0BF88E 65 06 02          			test	(flag),2
-0BF891 1A 2E             			jrnz	cmd17_err
-0BF893 30                			pre	$30
-0BF894 82 D4             			mv	ba,(bl)
-0BF896 AA 53 00 0C       			rel mv	[sect_number],ba
-0BF89A A2 02             			mv	(sect_num),ba
-0BF89C 0C 19 FB 0B       			rel mv	x,sect_1
-0BF8A0 0D 9B FB 0B       			rel mv	y,sect_2		;Faire une copie
-0BF8A4 09 41             			mv	il,sectsiz/2+1
-0BF8A6 04 8D F9          		rel call	rcv_sect
-0BF8A9 65 06 02          			test	(flag),2
-0BF8AC 18 09             			jrz	same_sect
-0BF8AE 0A FF FF          			mv	ba,-1
-0BF8B1 AA 53 00 0C       			rel mv	[sect_number],ba
-0BF8B5 12 0A             			jr	cmd17_err
-0BF8B7 30                	same_sect:	pre	$30
-0BF8B8 CD D6 80 00       			mvw	(cl),sectsiz
-0BF8BC 0C 19 FB 0B       			rel mv	x,sect_1
-0BF8C0 9F                			rc
-0BF8C1 06                	cmd17_err:	ret
-0BF8C2 60 18             	cmd18:		cmp	a,$18
-0BF8C4 19 80             			jrz	getroot				;Traitement de la commande $ 18 (pour DS)	
-0BF8C6 60 3F             	cmd3f:		cmp	a,$3f
-0BF8C8 1A 03             			jrnz	cmd40
-0BF8CA 02 59 F7          			rel jp	init				;Traitement de la commande 3Fh (trop loin pour jrz depuis 2026)
-0BF8CD 60 40             	cmd40:		cmp	a,$40
-0BF8CF 19 96             			jrz	root				;Traitement de commande 40h
-0BF8D1 08 03             	cmd_err:	mv	a,3				;Commande invalide
-0BF8D3 97                			sc
-0BF8D4 06                			ret
-0BF8D5                   	;----------------------------------------------------------------------
-0BF8D5                   	;		Lecture continue de secteurs
-0BF8D5                   	;----------------------------------------------------------------------
-0BF8D5 22                	read_sect:	pre	$22
-0BF8D6 C9 02 D4          			mvw	(sect_num),(bl)
-0BF8D9 FD 54             			mv	y,x
-0BF8DB 09 40             			mv	il,sectsiz/2
-0BF8DD 8A 53 00 0C       			rel mv	ba,[sect_number]
-0BF8E1 D6 02 02          			cmpw	(sect_num),ba    ;Secteurs tampons et
-0BF8E4 1A 0E             			jrnz	read_sect1	     ;Avez-vous frappe?
-0BF8E6 0D 19 FB 0B       			rel mv	y,sect_1
-0BF8EA 92 25             	read_sect2:	mv	ba,[y++]
-0BF8EC B2 24             			mv	[x++],ba
-0BF8EE 7C 01             			dec	il
-0BF8F0 1B 08             			jrnz	read_sect2
-0BF8F2 12 08             			jr	read_sect3
-0BF8F4                   	read_sect1:
-0BF8F4 04 8D F9          		rel call	rcv_sect
-0BF8F7 65 06 02          			test	(flag),2
-0BF8FA 1A 13             			jrnz	read_err
-0BF8FC 30                	read_sect3:	pre	$30
-0BF8FD 82 D4             			mv	ba,(bl)
-0BF8FF 6C 02             			inc	ba
-0BF901 30                			pre	$30
-0BF902 A2 D4             			mv	(bl),ba
-0BF904 30                			pre	$30
-0BF905 82 D8             			mv	ba,(dl)
-0BF907 7C 02             			dec	ba
-0BF909 30                			pre	$30
-0BF90A A2 D8             			mv	(dl),ba
-0BF90C 1B 39             			jrnz	read_sect
-0BF90E 9F                			rc
-0BF90F 06                	read_err:	ret
-0BF910                   	;----------------------------------------------------------------------
-0BF910                   	;		Ecriture continue de secteurs
-0BF910                   	;----------------------------------------------------------------------
-0BF910 22                	write_sect:	pre	$22
-0BF911 C9 02 D4          			mvw	(sect_num),(bl)
-0BF914 09 80             			mv	il,sectsiz
-0BF916 8A 53 00 0C       			rel mv	ba,[sect_number]
-0BF91A D6 02 02          			cmpw	(sect_num),ba    ;Secteurs tampons et
-0BF91D 1A 0E             			jrnz	write_sect1	     ;Avez-vous frappe?
-0BF91F 0D 19 FB 0B       			rel mv	y,sect_1
-0BF923 90 24             	write_sect2:	mv	a,[x++]
-0BF925 B0 25             			mv	[y++],a
-0BF927 7C 01             			dec	il
-0BF929 1B 08             			jrnz	write_sect2
-0BF92B 12 08             			jr	write_sect3
-0BF92D                   	write_sect1:
-0BF92D 04 49 F9          		rel call	send_sect
-0BF930 65 06 02          			test	(flag),2
-0BF933 1A 13             			jrnz	write_err
-0BF935 30                	write_sect3:	pre	$30
-0BF936 82 D4             			mv	ba,(bl)
-0BF938 6C 02             			inc	ba
-0BF93A 30                			pre	$30
-0BF93B A2 D4             			mv	(bl),ba
-0BF93D 30                			pre	$30
-0BF93E 82 D8             			mv	ba,(dl)
-0BF940 7C 02             			dec	ba
-0BF942 30                			pre	$30
-0BF943 A2 D8             			mv	(dl),ba
-0BF945 1B 37             			jrnz	write_sect
-0BF947 9F                			rc
-0BF948 06                	write_err:	ret
-0BF949                   	;----------------------------------------------------------------------
-0BF949                   	;		Transmission a un secteur
-0BF949                   	;----------------------------------------------------------------------
-0BF949 29                	send_sect:	pushu	il
-0BF94A 04 D0 FA          		rel call	send_cache
-0BF94D 39                			popu	il
-0BF94E 2F                			pushu	imr
-0BF94F 30                			pre	$30
-0BF950 CC FB A0          			mv	(imr),$a0
-0BF953 85 0A             			mv	y,(cachep)
-0BF955 2D                			pushu	y
-0BF956 90 24             	send_sect_2:	mv	a,[x++]
-0BF958 B0 25             			mv	[y++],a		;Ecrivez a CACHE
-0BF95A 7C 01             			dec	il
-0BF95C 1B 08             			jrnz	send_sect_2
-0BF95E 08 57             			mv	a,'W'
-0BF960 04 DF F9          		rel call	send_one
-0BF963 80 02             			mv	a,(sect_num)
-0BF965 04 DF F9          		rel call	send_one
-0BF968 80 03             			mv	a,(sect_num+1)
-0BF96A 04 DF F9          		rel call	send_one
-0BF96D 3D                			popu	y
-0BF96E 09 81             			mv	il,sectsiz+1
-0BF970 90 25             	send_sect_3:	mv	a,[y++]
-0BF972 04 DF F9          		rel call	send_one
-0BF975 7C 01             			dec	il
-0BF977 1B 09             			jrnz	send_sect_3
-0BF979 08 FF             			mv	a,$ff
-0BF97B 04 DF F9          		rel call	send_one
-0BF97E 04 F0 F9          		rel call	receive_one
-0BF981 65 06 02          			test	(flag),2
-0BF984 18 05             			jrz	send_ok
-0BF986 0A FF FF          			mv	ba,-1
-0BF989 B2 05             			mv	[y],ba				;Invalider le cache mis en cache
-0BF98B 3F                	send_ok:	popu	imr
-0BF98C 06                			ret
-0BF98D                   	;----------------------------------------------------------------------
-0BF98D                   	;		Reception 1 secteur
-0BF98D                   	;----------------------------------------------------------------------
-0BF98D 2F                	rcv_sect:	pushu	imr
-0BF98E 29                			pushu	il
-0BF98F 30                			pre	$30
-0BF990 CC FB A0          			mv	(imr),$a0
-0BF993 04 D0 FA          		rel call	send_cache
-0BF996 39                			popu	il
-0BF997 1E 28             			jrnc	read_cache		;Sautez quand vous pouvez lire de CACHE
-0BF999 29                			pushu	il
-0BF99A 2C                			pushu	x
-0BF99B 84 0A             			mv	x,(cachep)			;Charger dans CACHE
-0BF99D 08 52             			mv	a,'R'
-0BF99F 04 DF F9          		rel call	send_one
-0BF9A2 80 02             			mv	a,(sect_num)
-0BF9A4 04 DF F9          		rel call	send_one
-0BF9A7 80 03             			mv	a,(sect_num+1)
-0BF9A9 04 DF F9          		rel call	send_one
-0BF9AC 9F                			rc
-0BF9AD 04 F0 F9          		rel call	receive_one
-0BF9B0 1C 0D             			jrc	rcv_sect_2
-0BF9B2 B0 24             			mv	[x++],a
-0BF9B4 09 80             			mv	il,sectsiz
-0BF9B6                   	rcv_sect_1:
-0BF9B6 04 F0 F9          		rel call	receive_one
-0BF9B9 B0 24             			mv	[x++],a
-0BF9BB 7C 01             			dec	il
-0BF9BD 1B 09             			jrnz	rcv_sect_1
-0BF9BF 3C                	rcv_sect_2:	popu	x
-0BF9C0 39                			popu	il
-0BF9C1 B6 37             	read_cache:	mv	[--s],u			;Lire de CACHE
-0BF9C3 86 0A             			mv	u,(cachep)
-0BF9C5 65 06 02          			test	(flag),2
-0BF9C8 18 08             			jrz	read_cache_1
-0BF9CA 0A FF FF          			mv	ba,-1
-0BF9CD B2 86 81          			mv	[u+cache_sect],ba;Invalider le cache entrant
-0BF9D0 12 09             			jr	rcv_err
-0BF9D2 3A                	read_cache_1:	popu	ba		;mv	ba,[u++]
-0BF9D3 B2 24             			mv	[x++],ba
-0BF9D5 B2 25             			mv	[y++],ba
-0BF9D7 7C 01             			dec	il
-0BF9D9 1B 09             			jrnz	read_cache_1
-0BF9DB 96 27             	rcv_err:	mv	u,[s++]
-0BF9DD 3F                			popu	imr
-0BF9DE 06                			ret
-0BF9DF                   	;----------------------------------------------------------------------
-0BF9DF                   	;		Transmission sur 1 octet
-0BF9DF                   	;----------------------------------------------------------------------
-0BF9DF 30                	send_one:	pre	$30
-0BF9E0 65 F8 08          			test	(usr),$8
-0BF9E3 19 06             			jrz	send_one			;Attendez qu'il soit pret pour Tx
-0BF9E5 65 06 02          			test	(flag),2
-0BF9E8 18 02             			jrz	send_one_2			;En mode d'arret de la transmission, 00h est transmis
-0BF9EA 08 00             			mv	a,0
-0BF9EC 30                	send_one_2:	pre	$30
-0BF9ED A0 FA             			mv	(txd),a		;Envoyer
-0BF9EF 06                			ret
-0BF9F0                   	;----------------------------------------------------------------------
-0BF9F0                   	;		Recevez 1 octet
-0BF9F0                   	;----------------------------------------------------------------------
-0BF9F0 12 0F             	receive_one:	jr	receive_one_s
-0BF9F2 FF 08             			db	ssr,8
-0BF9F4                   	;		test	(ssr),8
-0BF9F4 1A 1E             			jrnz	receive_one_err	;[BRK] a ete presse
-0BF9F6 65 06 01          			test	(flag),1
-0BF9F9 19 0B             			jrz	receive_one			;Attendez qu'un octet soit recu
-0BF9FB 80 07             			mv	a,(rxdata)
-0BF9FD 71 06 FE          			and	(flag),$fe			;Reinitialiser le drapeau
-0BFA00 06                			ret
-0BFA01 0A 40 9C          	receive_one_s:	mv	ba,timeout
-0BFA04 30                	receive_one_lp:	pre	$30			;1
-0BFA05 65 FF 08          			test	(ssr),8	;4
-0BFA08 1A 0A             			jrnz	receive_one_err		;2
-0BFA0A 65 06 01          			test	(flag),1		;4
-0BFA0D 1A 09             			jrnz	receive_one_ok		;2
-0BFA0F 7C 02             			dec	ba			;3
-0BFA11 1B 0F             			jrnz	receive_one_lp		;3
-0BFA13 97                			sc
-0BFA14 79 06 02          	receive_one_err:or	(flag),2	;Definir le mode d'arret de la transmission
-0BFA17 06                			ret
-0BFA18 0A 30 65          	receive_one_ok:	mv	ba,$6530	;pre $30 test (m),n
-0BFA1B AA F0 F9 0B       			rel mv	[receive_one],ba
-0BFA1F 80 07             			mv	a,(rxdata)
-0BFA21 71 06 FE          			and	(flag),$fe			;Reinitialiser le drapeau
-0BFA24 06                			ret
-0BFA25                   	;----------------------------------------------------------------------
-0BFA25                   	;		Recevez une routine de traitement des interruptions
-0BFA25                   	;----------------------------------------------------------------------
-0BFA25 30                	rcv:		pre	$30
-0BFA26 80 F9             			mv	a,(rxd)
-0BFA28 A0 07             			mv	(rxdata),a
-0BFA2A 79 06 01          			or	(flag),1			;Definir le drapeau de reception complete
-0BFA2D 07                			retf
-0BFA2E                   	;----------------------------------------------------------------------
-0BFA2E                   	;		Tampon clair
-0BFA2E                   	;----------------------------------------------------------------------
-0BFA2E 09 82             	buffer_clr:	mv	il,sectsiz+2
-0BFA30 0A 00 00          			mv	ba,0
-0BFA33 0C 19 FB 0B       			rel mv	x,sect_1
-0BFA37 B2 24             	buffer_clr_1:	mv	[x++],ba	;Remplir le tampon avec 00h
-0BFA39 7C 03             			dec	i
-0BFA3B 1B 06             			jrnz	buffer_clr_1
-0BFA3D 0A FF FF          			mv	ba,-1
-0BFA40 AA 53 00 0C       			rel mv	[sect_number],ba	;Initialisation du numero de secteur
-0BFA44 09 07             			mv	il,n_fcache
-0BFA46 0D 23 FC 0B       			rel mv	y,fcache
-0BFA4A AD 1D FC 0B       			rel mv	[fcachep],y
-0BFA4E 04 5F FA          		rel call	buffer_clr_3
-0BFA51 09 01             			mv	il,n_dcache
-0BFA53 0D CD FF 0B       			rel mv	y,dcache
-0BFA57 AD 20 FC 0B       			rel mv	[dcachep],y
-0BFA5B 04 5F FA          		rel call	buffer_clr_3
-0BFA5E 06                			ret
-0BFA5F                   	
-0BFA5F FD 45             	buffer_clr_3:	mv	x,y
-0BFA61 B2 84 81          			mv	[x+cache_sect],ba
-0BFA64 7C 01             			dec	il
-0BFA66 18 0A             			jrz	buffer_clr_2
-0BFA68 0A 86 00          			mv	ba,cache_size
-0BFA6B 45 52             			add	y,ba
-0BFA6D B5 84 83          			mv	[x+cache_next],y
-0BFA70 13 13             			jr	buffer_clr_3
-0BFA72 0D FF FF 0F       	buffer_clr_2:	mv	y,$fffff
-0BFA76 B5 84 83          			mv	[x+cache_next],y
-0BFA79 06                			ret
-0BFA7A                   	;----------------------------------------------------------------------
-0BFA7A                   	;		Verification de la correspondance du tampon pour la commande $ 17
-0BFA7A                   	;----------------------------------------------------------------------
-0BFA7A 0C 19 FB 0B       	check_sect:	rel mv	x,sect_1
-0BFA7E 09 81             			mv	il,sectsiz+1
-0BFA80 E0 24 00          	check_sect_3:	mv	(i_work1),[x++]
-0BFA83 90 84 81          			mv	a,[x+sectsiz+1]
-0BFA86 63 00             			cmp	(i_work1),a			;Comparaison du contenu de la memoire tampon
-0BFA88 1A 05             			jrnz	check_sect_4
-0BFA8A 7C 01             			dec	il
-0BFA8C 1B 0E             			jrnz	check_sect_3
-0BFA8E 06                			ret
-0BFA8F                   	check_sect_4:
-0BFA8F D1 02 53 00 0C    			rel mvw	(sect_num),[sect_number]
-0BFA94 0C 19 FB 0B       			rel mv	x,sect_1
-0BFA98 09 81             			mv	il,sectsiz+1
-0BFA9A 2C                			pushu	x
-0BFA9B 04 49 F9          		rel call	send_sect
-0BFA9E 3C                			popu	x
-0BFA9F 82 02             			mv	ba,(sect_num)
-0BFAA1 6C 02             			inc	ba
-0BFAA3 A2 02             			mv	(sect_num),ba
-0BFAA5 7C 02             			dec	ba
-0BFAA7 7C 02             			dec	ba
-0BFAA9 A2 04             			mv	(sect_num2),ba
-0BFAAB 85 0A             			mv	y,(cachep)
-0BFAAD 92 85 81          	check_sect_6:	mv	ba,[y+cache_sect]
-0BFAB0 D6 02 02          			cmpw	(sect_num),ba
-0BFAB3 1A 07             			jrnz	check_sect_5
-0BFAB5 28                			pushu	a
-0BFAB6 90 84 80          			mv	a,[x+sectsiz]
-0BFAB9 B0 05             			mv	[y],a				;Le premier octet du secteur a cote du secteur accede
-0BFABB 38                			popu	a
-0BFABC D6 02 04          	check_sect_5:	cmpw	(sect_num2),ba
-0BFABF 1A 05             			jrnz	check_sect_7
-0BFAC1 90 04             			mv	a,[x]
-0BFAC3 B0 85 80          			mv	[y+sectsiz],a		;Le 129eme octet du secteur avant le secteur accede
-0BFAC6 95 85 83          	check_sect_7:	mv	y,[y+cache_next]
-0BFAC9 2D                			pushu	y
-0BFACA 6C 05             			inc	y
-0BFACC 3D                			popu	y
-0BFACD 1B 22             			jrnz	check_sect_6
-0BFACF 06                			ret
-0BFAD0                   	;----------------------------------------------------------------------
-0BFAD0                   	;		Verification de la correspondance avec le cache
-0BFAD0                   	;----------------------------------------------------------------------
-0BFAD0                   	send_cache:
-0BFAD0 2C                			pushu	x
-0BFAD1 2D                			pushu	y
-0BFAD2 0C 20 FC 0B       			rel mv	x,dcachep
-0BFAD6 0A 2C 00          	secpatch:	mv	ba,dtop			;Le numero du secteur principal de la zone DATA est ecrit
-0BFAD9 D6 02 02          			cmpw	(sect_num),ba
-0BFADC 1E 04             			jrnc	send_cache_0
-0BFADE 0C 1D FC 0B       			rel mv	x,fcachep
-0BFAE2 A4 0A             	send_cache_0:	mv	(cachep),x
-0BFAE4 A4 10             			mv	(before),x
-0BFAE6 94 04             			mv	x,[x]
-0BFAE8 92 84 81          	send_cache_1:	mv	ba,[x+cache_sect]
-0BFAEB 95 84 83          			mv	y,[x+cache_next]
-0BFAEE D6 02 02          			cmpw	(sect_num),ba
-0BFAF1 18 11             			jrz	send_cache_2		;Le secteur auquel on a tente d'acceder est le meme que CACHE
-0BFAF3 2D                			pushu	y
-0BFAF4 6C 05             			inc	y
-0BFAF6 3D                			popu	y
-0BFAF7 97                			sc						;Marquez qu'il ne peut pas etre lu de CACHE
-0BFAF8 18 0A             			jrz	send_cache_2
-0BFAFA 08 83             			mv	a,cache_next
-0BFAFC 45 40             			add	x,a
-0BFAFE A4 10             			mv	(before),x
-0BFB00 FD 45             			mv	x,y
-0BFB02 13 1C             			jr	send_cache_1
-0BFB04 BD 00 10          	send_cache_2:	mv	[(before)],y
-0BFB07 9D 00 0A          			mv	y,[(cachep)]
-0BFB0A B5 84 83          			mv	[x+cache_next],y
-0BFB0D E9 84 02 81       			mvw	[x+cache_sect],(sect_num)
-0BFB11 BC 00 0A          			mv	[(cachep)],x
-0BFB14 A4 0A             			mv	(cachep),x
-0BFB16 3D                			popu	y
-0BFB17 3C                			popu	x
-0BFB18 06                			ret
-0BFB19                   	
-0BFB19                   	prgend:
-0BFB19                   	;----------------------------------------------------------------------
-0BFB19                   	;		Zone de travail
-0BFB19                   	;----------------------------------------------------------------------
-0BFB19                   	suborg		*
-0BFB19                   	byte		sect_1[sectsiz+1+1],sect_2[sectsiz+1+1]
-0BFB19                   	pntr		fcachep,dcachep
-0BFB19                   	byte		fcache[cache_size*n_fcache]
-0BFB19                   	byte		dcache[cache_size*n_dcache]
-0BFB19                   	word		sect_number
-0BFB19                   	
-0BFB19                   	blen:		equ	%-btop
-0BFB19                   	blen_162:	equ	2336		;Taille du bloc de PLINKC 1.62 d'origine ("Already exists" la distingue)
-0BFB19                   	
-0BFB19                   	;----------------------------------------------------------------------
-0BFB19                   	;		Verifications a l'assemblage
-0BFB19                   	;----------------------------------------------------------------------
-0BFB19                   			assert	entry = $bf000,'entry hors de l''org : relocation faussee'
-0BFB19                   			assert	ihead-btop = $22,'en-tete IOCS hors de bloc+22h'
-0BFB19                   			assert	dvname-btop = $2a,'nom de device hors de bloc+2Ah (-U le cherche la)'
-0BFB19                   			assert	pg_m-mb < 256,'table mb au-dela de 256 octets (IL)'
-0BFB19                   			assert	blen < 10000,'blen sur plus de 4 chiffres : st_ver ne l''ecrit pas'
-0BFB19                   			assert	blen <> blen_162,'blen = blen_162 : ambigu pour -U et pour Already exists'
-0BFB19                   			end
+0BE000                   			org	$be000
+0BE000                   	;	2026-10-07 : l'objet est charge en 0BE000h (CALL &BE000), plus en 0BF000h.
+0BE000                   	;	Avec la vitesse propre et INIT "L:T", il ne tenait plus dans les 3072
+0BE000                   	;	octets de 0BF000h au plafond 0BFC00h de la zone langage machine ; un
+0BE000                   	;	LOADM au-dela ecrase la zone systeme (s1_top, d_link...). Reserver donc
+0BE000                   	;	7168 octets (01C00h) avant LOADM :
+0BE000                   	;	    POKE &BFE03,&1A,&FD,&B,0,&1C,0 : CALL &FFFD8
+0BE000                   	;	verifier.py controle que l'objet entier, table comprise, reste sous
+0BE000                   	;	0BFC00h (la table est ajoutee apres END : aucun assert ne la voit).
+0BE000                   	;----------------------------------------------------------------------
+0BE000                   	;
+0BE000                   	;	Pocket Link Cache Device Driver ver 1.62
+0BE000                   	;	Installation program
+0BE000                   	;	for PC-E500 series pocket computer
+0BE000                   	;	Copyright (c) 1996,1997,1999 by Daisuke Mizobata
+0BE000                   	;
+0BE000                   	;	based on PLINK.SYS ver 1.04
+0BE000                   	;	Copyright (c) 1990,93,94 N.Kon
+0BE000                   	;
+0BE000                   	;----------------------------------------------------------------------
+0BE000                   	;----------------------------------------------------------------------
+0BE000                   	;
+0BE000                   	;	Mise a jour 2026 (J.-F. Albouy) - derive de PLINKC 1.62, voir NOTICE
+0BE000                   	;	  - constantes systeme tirees de pce500.inc ;
+0BE000                   	;	  - desinstallation par CALL &BE000 "-U" (deliage + SET/KILL), qui
+0BE000                   	;	    reconnait aussi un bloc de la 1.62 d'origine ;
+0BE000                   	;	  - INIT "L:?" : etat du pilote (mode, numero de device, bloc) ;
+0BE000                   	;	  - vitesse PROPRE au pilote (19200 par defaut), plus celle du COM: du
+0BE000                   	;	    BASIC qu'un RESET remet a 1200 : INIT "L:Bnnnnn" la change, INIT
+0BE000                   	;	    "L:T" teste la liaison (commande 'Q') ;
+0BE000                   	;	  - INIT "L:H" : version, taille, etat et commandes ; une option
+0BE000                   	;	    inconnue est signalee (la 1.62 videait le tampon sans rien dire) ;
+0BE000                   	;	  - INIT "L:2" : mode 256K ;
+0BE000                   	;	  - apres chaque INIT "L:1"/"L:2"/"L:5", commande 'Q' : le serveur
+0BE000                   	;	    (APLINKS 1.07) rend son mode reel, que le pilote adopte ;
+0BE000                   	;	  - � deja installe � detaille : etat du pilote en place, autre
+0BE000                   	;	    version, bloc non chaine, ou "L:" pris par un autre pilote.
+0BE000                   	;	Protocole : seul ajout, la commande 'Q' (APLINKS 1.07 y repond, les
+0BE000                   	;	serveurs anciens l'ignorent) ; 'S' est inchange. Le corps ne differe de la 1.62 que par INIT "L:?",
+0BE000                   	;	INIT "L:2" et mpb256. verifier.py controle la table de relocation.
+0BE000                   	;	Assembleur : xasm2026-4 (dialecte A62 : rel, #defmacro, suborg, { }).
+0BE000                   	;	Reference d'origine : reference/plinkc.a62.asm -> PLINKC.OBJ.
+0BE000                   	;
+0BE000                   	;----------------------------------------------------------------------
+0BE000                   	;
+0BE000                   	
+0BE000                   	;----------------------------------------------------------------------
+0BE000                   	;		Definitions numeriques
+0BE000                   	;----------------------------------------------------------------------
+0BE000                   	;	Constantes systeme : pce500.inc (genere depuis les tables du
+0BE000                   	;	desassembleur SC62015Disassembler, noms identiques a ses sorties).
+0BE000                   	;	Correspondance avec les noms d'origine de PLINKC 1.62 :
+0BE000                   	;	  fcs -> fcs_call         iocs -> iocs_call      iroot -> d_link
+0BE000                   	;	  sio_rcv_vct -> intv_sio_rx   sio_param -> sio_baud
+0BE000                   	;	  base -> bp_ram   bx/cx/dx -> bl/cl/dl   cx+1 -> ch
+0BE000                   	;	  key_strobe_2 -> koh      sio_ctrl_reg -> ucr    sio_stat_reg -> usr
+0BE000                   	;	  sio_rx_reg -> rxd        sio_tx_reg -> txd      intr_mask_reg -> imr
+0BE000                   	;	  system_stat_reg -> ssr   btext -> txtbas        bdata -> datbas
+0BE000                   	;	  iwork -> iocsw           s1top -> s1_top        s1end -> s1_btm
+0BE000                   	;	  bworkp -> baswrk         $bfcbe -> softint
+0BE000                   	;	Retirees car inutilisees : iocs_fook, bpmax, keyvec, cdrv, rev.
+0BE000                   			include	pce500.inc
+0BE000                   	txtbas: equ 0CBH ; TEXT.BAS courant
+0BE000                   	datbas: equ 0CEH ; DATA.BAS courant
+0BE000                   	bl:     equ 0D4H ; registre BL / BX bas
+0BE000                   	cl:     equ 0D6H ; registre CL / CX bas
+0BE000                   	ch:     equ 0D7H ; registre CH / CX haut
+0BE000                   	dl:     equ 0D8H ; registre DL / DX bas
+0BE000                   	iocsw:  equ 0E6H ; zone de travail IOCS : recopie du pointeur [0BFD17h] (3 octets) (manuel technique, IOCS Special Technique p85-86)
+0BE000                   	bp_ram: equ 0ECH ; base pointer RAM interne
+0BE000                   	koh:    equ 0F1H ; Key Output Buffer haut (KOH) : pilote les pins KO8-KO15. Lecture/ecriture (manuel CPU p9-10)
+0BE000                   	ucr:    equ 0F7H ; UART Control Register : bit 7 BOE (break : force 0 sur TXD), bits 6-4 debit (0 arrete ET REINITIALISE l UART, 1 300, 2 600, 3 1200, 4 2400, 5 4800, 6 9600, 7 19200 bps), bits 3-2 parite (00 paire, 01 impaire, 1x aucune), bit 1 ...
+0BE000                   	usr:    equ 0F8H ; UART Status Register : bit 5 RXR caractere recu, bit 4 TXE emetteur au repos, bit 3 TXR tampon d'emission libre, bit 2 FE erreur de trame, bit 1 OE surcharge, bit 0 PE erreur de parite. RXR et TXR alimentent les bits RXRI/TXRI ...
+0BE000                   	rxd:    equ 0F9H ; UART Receive Buffer : le caractere recu ; le lire remet RXR a zero. LECTURE SEULE (manuel CPU p12-14)
+0BE000                   	txd:    equ 0FAH ; UART Transmit Buffer : le caractere a emettre ; peut etre ecrit pendant l'emission du precedent, TXR dit si le tampon est libre. ECRITURE SEULE (manuel CPU p14-15)
+0BE000                   	imr:    equ 0FBH ; Interrupt Mask Register : bit 7 IRM masque general, bit 6 EXM interruption EXTERNE (pin IRQ ; sur PC-E500 ce pin est cable au controleur de batterie, d'ou 'batterie faible' cote machine), bit 5 RXRM reception SIO, bit 4 TXRM em ...
+0BE000                   	ssr:    equ 0FFH ; System Status Register : bit 3 ONK touche ON enfoncee, bit 2 RSF (1 : on sort d'un HALT/OFF, 0 : le pin RESET a ete active), bit 1 CI entree cassette, bit 0 TEST entree de test. LECTURE SEULE (manuel CPU p20-21)
+0BE000                   	s1_top:           equ 0BFC15H ; top of S1 (nom et libelle de REGISTER.ASM) ; lead address du slot 0 = lecteur S1:, 080000h sur PC-E500S (3 octets ; manuel technique, Parameter of memory block device)
+0BE000                   	d_link:           equ 0BFCA2H ; device link pointer / IOCSH
+0BE000                   	softint:          equ 0BFCBEH ; bit 7 = break, bit 6 = batterie faible
+0BE000                   	intv_sio_rx:      equ 0BFCD5H ; vecteur interruption reception SIO, ISR/IMR bit 5 RXRM ; reception d'un octet SIO terminee (manuel technique, List of interrupt factor p91-92)
+0BE000                   	s1_btm:           equ 0BFCDEH ; bottom of S1 (nom et libelle de REGISTER.ASM) ; le manuel dit "last address of slot 0 (S1:) + 1" et La Feuille du Sharp en fait le pointeur de la 1re zone de travail, la pile utilisateur U : trois lectures d'une me ...
+0BE000                   	baswrk:           equ 0BFD0EH ; POINTEUR (3 octets) vers la zone de travail du BASIC, en memoire EXTERNE : il CONTIENT l'adresse, il N'EST PAS la zone. La ROM le recopie dans basptr par mvp (0D1h),[0BFD0Eh] en 0F98CAh. Nom de E. Kako (register.ls ...
+0BE000                   	fcs_call:         equ 0FFFE4H ; FCS call entry
+0BE000                   	iocs_call:        equ 0FFFE8H ; IOCS call entry
+0BE000                   	fcs_write_block:          equ 04H   ; ecriture d'un bloc ((cl) = handle, X = source, Y = nombre d'octets ; retour X = adresse su
+0BE000                   	fcs_write_byte:           equ 06H   ; ecriture d'un octet ((cl) = handle, a = donnee ; retour b = nombre d'octets ecrits)
+0BE000                   	iocs_find_drive:          equ 00H   ; recherche du device et du lecteur d'apres le nom de lecteur (X = adresse du nom ; retour (
+0BE000                   	iocs_header_addr:         equ 01H   ; adresse du header d'apres le numero de device ((cl) = device ; retour X = adresse du heade
+0BE000                   	iocs_fmt_drive:           equ 04H   ; iocs_format_drive - formatage du device designe par le nom de lecteur (X = nom de lecteur suivi de la chaine d
+0BE000                   	dev_key:          equ 1H    ; device 1 (STDI:/KYBD:)
+0BE000                   	dev_memcard:      equ 6H    ; device 6 (S1:/S2:/S3:)
+0BE000                   	d1_key_read:      equ 43H   ; key_key_read - lecture d'une touche, apres traitement des touches SHIFT et CTRL (a bit 7 = 0 ...
+0BE000                   	d1_buffer_clear:  equ 45H   ; key_buffer_clear - vidage du tampon de balayage et du tampon clavier
+0BE000                   	d6_search_phys:   equ 41H   ; memcard_search_phys - adresse physique d'un bloc d'apres son nom ((ch) = slot 0/1/2, X = nom du bloc ...
+0BE000                   	d6_condense:      equ 47H   ; memcard_condense - compactage de l'espace libre des blocs memoire ((ch) = slot)
+0BE000                   	
+0BE000                   	sectsiz:	equ	128
+0BE000                   	cache_sect:	equ	sectsiz+1
+0BE000                   	cache_next:	equ	cache_sect+2
+0BE000                   	cache_size:	equ	cache_next+3
+0BE000                   	n_fcache:	equ	7		;	Nombre de secteurs dans le cache FAT
+0BE000                   	n_dcache:	equ	1		;	Nombre de secteurs dans le cache de donnees
+0BE000                   	dtop:		equ	44
+0BE000                   	timeout:	equ	40000		; Delai d'attente (environ 1 seconde)
+0BE000                   	def_ucr:	equ	$78			; Vitesse du pilote par defaut (2026) : 19200 bauds,
+0BE000                   						; sans parite, 8 bits, 1 stop (format de ucr / sio_baud)
+0BE000                   	
+0BE000                   	
+0BE000                   	;	Revision de la mise a jour 2026, definie UNE seule fois : banniere de
+0BE000                   	;	l'installateur et INIT "L:H". La 1.62 reste le numero de Mizobata.
+0BE000                   	
+0BE000                   	;
+0BE000                   	;	Installateur
+0BE000                   	;
+0BE000                   	
+0BE000                   	pntr	dest,bottom,mdf,offset
+0BE000                   	byte	argu				;	Drapeau d'argument : 0 installer, 1 desinstaller
+0BE000                   	
+0BE000                   	;	ENTRY DOIT RESTER A L'ORG : la boucle de relocation part de btop-entry,
+0BE000                   	;	et la table generee par les 'rel' compte ses ecarts depuis l'org.
+0BE000                   	entry:
+0BE000 32                		pre	$32
+0BE001 49 EC 0D          		sub	(bp_ram),%
+0BE004                   	
+0BE004                   	;	Argument de CALL : CALL &BE000 installe, CALL &BE000 "-U" desinstalle.
+0BE004                   	;	Protocole d'UUENCODE (argskp) : le pointeur de ligne BASIC, pris sur la
+0BE004                   	;	pile U, y est RENDU avance jusqu'au terminateur ; quatre terminateurs
+0BE004                   	;	(0, CR, 1Ah, 0FFh) - sinon 'Syntax error' au retour dans BASIC.
+0BE004 3C                		popu	x
+0BE005 CC 0C 00          		mv	(argu),0
+0BE008 90 24             	arg_lp:	mv	a,[x++]
+0BE00A 60 00             		cmp	a,0
+0BE00C 18 1F             		jrz	arg_end
+0BE00E 60 0D             		cmp	a,$0d
+0BE010 18 1B             		jrz	arg_end
+0BE012 60 1A             		cmp	a,$1a
+0BE014 18 17             		jrz	arg_end
+0BE016 60 FF             		cmp	a,$ff
+0BE018 18 13             		jrz	arg_end
+0BE01A 60 2D             		cmp	a,'-'
+0BE01C 1B 16             		jrnz	arg_lp
+0BE01E 90 04             		mv	a,[x]
+0BE020 60 75             		cmp	a,'u'
+0BE022 18 04             		jrz	arg_u
+0BE024 60 55             		cmp	a,'U'
+0BE026 1B 20             		jrnz	arg_lp
+0BE028 CC 0C 01          	arg_u:	mv	(argu),1
+0BE02B 13 25             		jr	arg_lp
+0BE02D 7C 04             	arg_end:	dec	x
+0BE02F 2C                		pushu	x
+0BE030                   	
+0BE030 0C AA E2 0B       		mv	x,title
+0BE034 0D 64 00 00       		mv	y,title_e-title
+0BE038 04 B4 E1          		call	puts
+0BE03B 65 0C 01          		test	(argu),1
+0BE03E 15 E9 E1          		jpnz	uninst
+0BE041                   	
+0BE041                   	;	Deja installe ? Le bloc PLINK.SYS d'abord, puis "L:" (2026 : la 1.62
+0BE041                   	;	refusait sur l'un ou l'autre sans dire lequel ni ou).
+0BE041 32                		pre	$32
+0BE042 CC D7 00          		mv	(ch),0			;	Slot 0 = S1: (fonction 41h)
+0BE045 0C 9F E4 0B       		mv	x,btop+1
+0BE049 09 41             		mv	il,d6_search_phys
+0BE04B 04 E0 E1          		call	memd			;	Y = bloc, carry si absent
+0BE04E 1C 4A             		jrc	ex_sans_bloc
+0BE050 A5 00             		mv	(dest),y
+0BE052 0C C8 E4 0B       		mv	x,dvname
+0BE056 09 00             		mv	il,iocs_find_drive
+0BE058 04 E4 E1          		call	icall			;	Recherche de nom de lecteur
+0BE05B 1C 28             		jrc	ex_non_lie		;	Bloc present, mais "L:" n'est plus chaine
+0BE05D 84 00             		mv	x,(dest)
+0BE05F 95 84 11          		mv	y,[x+$11]
+0BE062 A5 03             		mv	(bottom),y
+0BE064 0D FE 0C 00       		mv	y,blen
+0BE068 D7 05 03          		cmpp	(bottom),y
+0BE06B 1A 0E             		jrnz	ex_autre		;	Un autre PLINK.SYS (1.62 d'origine...)
+0BE06D 0C 5B E3 0B       		mv	x,etat			;	Notre version : INIT "L:?" lui fait
+0BE071 09 04             		mv	il,iocs_fmt_drive	;	afficher son etat (mode, device, bloc)
+0BE073 04 E4 E1          		call	icall
+0BE076 09 00             		mv	il,exi_m-mb
+0BE078 02 A1 E1          		jp	msend
+0BE07B                   	ex_autre:
+0BE07B 0C 5F E3 0B       		mv	x,exo_m
+0BE07F 0D 21 00 00       		mv	y,exo_e-exo_m
+0BE083 12 28             		jr	ex_fin
+0BE085                   	ex_non_lie:
+0BE085 0C 80 E3 0B       		mv	x,exu_m
+0BE089 0D 41 00 00       		mv	y,exu_e-exu_m
+0BE08D 04 B4 E1          		call	puts
+0BE090 0C 2D E3 0B       		mv	x,sk_m
+0BE094 0D 2E 00 00       		mv	y,sk_e-sk_m
+0BE098 12 13             		jr	ex_fin
+0BE09A                   	ex_sans_bloc:
+0BE09A 0C C8 E4 0B       		mv	x,dvname
+0BE09E 09 00             		mv	il,iocs_find_drive
+0BE0A0 04 E4 E1          		call	icall
+0BE0A3 1C 0E             		jrc	ex_libre		;	Ni bloc ni "L:" : on installe
+0BE0A5 0C C1 E3 0B       		mv	x,exl_m
+0BE0A9 0D 23 00 00       		mv	y,exl_e-exl_m
+0BE0AD 04 B4 E1          	ex_fin:	call	puts
+0BE0B0 02 A4 E1          		jp	fin
+0BE0B3                   	ex_libre:
+0BE0B3                   	
+0BE0B3 8D A2 FC 0B       		mv	y,[d_link]			;	Debut de la liste d'en-tete IOCS d'origine
+0BE0B7 AD C0 E4 0B       		mv	[ihead],y
+0BE0BB                   	
+0BE0BB                   	;	Definir le numero de peripherique
+0BE0BB 32                		pre	$32
+0BE0BC CC D6 09          		mv	(cl),10-1			;	Numero de peripherique planifie 10
+0BE0BF                   	_blk00001_t:
+0BE0BF 32                			pre	$32
+0BE0C0 6D D6             			inc	(cl)
+0BE0C2 09 01             			mv	il,iocs_header_addr
+0BE0C4 04 E4 E1          			call	icall
+0BE0C7 1F 0A             			jrnc	_blk00001_t
+0BE0C9                   	_blk00001_e:
+0BE0C9 32                		pre	$32
+0BE0CA D8 C3 E4 0B D6    		mv	[devno],(cl)		;	Definir le numero de peripherique
+0BE0CF                   	
+0BE0CF 09 47             		mv	il,d6_condense
+0BE0D1 04 E0 E1          		call	memd
+0BE0D4                   	
+0BE0D4                   	;	Verifiez l'emplacement d'installation
+0BE0D4 8C 15 FC 0B       		mv	x,[s1_top]
+0BE0D8 95 84 12          		mv	y,[x+$12]
+0BE0DB 45 45             	loop1:	add	x,y
+0BE0DD A4 00             		mv	(dest),x
+0BE0DF 90 04             		mv	a,[x]
+0BE0E1 60 FB             		cmp	a,$fb
+0BE0E3 1A 12             		jrnz	chksize
+0BE0E5 90 84 0C          		mv	a,[x+$0c]
+0BE0E8 64 0C             		test	a,$0c
+0BE0EA                   	
+0BE0EA 95 84 11          	loop2:	mv	y,[x+$11]
+0BE0ED 1B 14             		jrnz	loop1
+0BE0EF 45 45             		add	x,y
+0BE0F1 90 04             		mv	a,[x]
+0BE0F3 60 FB             		cmp	a,$fb
+0BE0F5 19 0D             		jrz	loop2
+0BE0F7                   	
+0BE0F7                   	chksize:
+0BE0F7                   	;	 Verifiez si le programme depasse la limite de 64 Ko
+0BE0F7 0B C2 07          		mv	i,prgend-btop		;	Taille du conducteur seulement
+0BE0FA 82 00             		mv	ba,(dest)
+0BE0FC 44 23             		add	ba,i
+0BE0FE 09 34             		mv	il,pg_m-mb
+0BE100 1C 93             		jrc	msend2
+0BE102                   	
+0BE102                   	;	Verifier la capacite de la memoire
+0BE102 A4 03             		mv	(bottom),x
+0BE104 8D DE FC 0B       		mv	y,[s1_btm]
+0BE108 4D 54             		sub	y,x
+0BE10A 7C 05             		dec	y
+0BE10C 0A FE 0C          		mv	ba,blen
+0BE10F 4D 52             		sub	y,ba
+0BE111 09 12             		mv	il,mem_m-mb
+0BE113 1C 80             		jrc	msend2
+0BE115                   	
+0BE115                   	;	Bloc memoire Stagger
+0BE115 84 03             		mv	x,(bottom)
+0BE117 85 00             		mv	y,(dest)
+0BE119 4D 45             		sub	x,y
+0BE11B 6C 04             		inc	x				;	x = nombre d'octets a deplacer
+0BE11D 2F                		pushu	imr			;	Desactiver l'interruption
+0BE11E B6 37             		mv	[--s],u			;	pushs	u
+0BE120 85 03             		mv	y,(bottom)
+0BE122 86 03             		mv	u,(bottom)
+0BE124 45 62             		add	u,ba
+0BE126 6C 06             		inc	u
+0BE128 6C 05             		inc	y
+0BE12A                   	_blk00002_t:
+0BE12A 90 35             			mv	a,[--y]
+0BE12C 28                			pushu	a		;	mv	[--u],a
+0BE12D 7C 04             			dec	x
+0BE12F 1B 07             		jrnz	_blk00002_t
+0BE131                   	_blk00002_e:
+0BE131                   	
+0BE131                   	;	Chauffeur de transfert
+0BE131 0E 9E E4 0B       		mv	u,btop
+0BE135 84 00             		mv	x,(dest)
+0BE137 B6 37             		mv	[--s],u			;	pushs	u
+0BE139 4D 64             		sub	u,x
+0BE13B A6 09             		mv	(offset),u
+0BE13D 96 27             		mv	u,[s++]			;	pops	u
+0BE13F 0B C2 07          		mv	i,prgend-btop	;	Taille du conducteur seulement
+0BE142                   	_blk00003_t:
+0BE142 38                			popu	a		;	mv	a,[u++]
+0BE143 B0 24             			mv	[x++],a
+0BE145 7C 03             			dec	i
+0BE147 1B 07             			jrnz	_blk00003_t
+0BE149                   	_blk00003_e:
+0BE149                   	
+0BE149                   	;	Relocaliser le traitement
+0BE149 85 00             		mv	y,(dest)
+0BE14B 0A 9E 04          		mv	ba,btop-entry
+0BE14E 4D 52             		sub	y,ba
+0BE150                   	_blk00004_t:
+0BE150 38                			popu	a		;	mv	a,[u++]
+0BE151 60 FF             			cmp	a,$ff
+0BE153 18 1F             			jrz	_blk00004_e
+0BE155 09 02             			mv	il,2
+0BE157 64 80             			test	a,$80
+0BE159 18 02             			jrz	word
+0BE15B 6C 01             			inc	il
+0BE15D 70 7F             	word:		and	a,$7f
+0BE15F 60 7E             			cmp	a,$7e
+0BE161 1A 04             			jrnz	short
+0BE163 3A                			popu	ba		;	mv	ba,[u++]
+0BE164 45 52             			add	y,ba
+0BE166 0A                			db	$0a			;	Passer les 2 octets suivants
+0BE167 45 50             	short:		add	y,a		
+0BE169 E2 05 06          			mvp	(mdf),[y]
+0BE16C 5C 06 09          			sbcl	(mdf),(offset)
+0BE16F EA 05 06          			mvp	[y],(mdf)
+0BE172 13 24             			jr	_blk00004_t
+0BE174                   	_blk00004_e:
+0BE174                   	
+0BE174 96 27             		mv	u,[s++]			;	pops	u
+0BE176                   	
+0BE176                   	;	S'inscrire a la liste IOCS
+0BE176 84 00             		mv	x,(dest)
+0BE178 08 22             		mv	a,ihead-btop
+0BE17A 45 40             		add	x,a
+0BE17C AC A2 FC 0B       		mv	[d_link],x
+0BE180                   	
+0BE180 3F                		popu	imr
+0BE181 0C C8 E4 0B       		mv	x,dvname
+0BE185 09 04             		mv	il,iocs_fmt_drive
+0BE187 04 E4 E1          		call	icall		;	Initialisation des parametres
+0BE18A 0C 5B E3 0B       		mv	x,etat		;	2026 : le pilote affiche son etat, vitesse
+0BE18E 09 04             		mv	il,iocs_fmt_drive	;	comprise (INIT "L:?")
+0BE190 04 E4 E1          		call	icall
+0BE193                   	
+0BE193 09 27             		mv	il,ins_m-mb
+0BE195                   	msend2:
+0BE195                   	
+0BE195 2B                		pushu	i
+0BE196 04 BF E1          		call	linkbas		;	Corrigez les pointeurs de BTEXT $ et BDATA $ en BASIC
+0BE199 08 00             		mv	a,0
+0BE19B 32                		pre	$32
+0BE19C B8 80 E6 3A       		mv	[(iocsw)+$3a],a	;	Detachez RAMFILE
+0BE1A0 3B                		popu	i
+0BE1A1 04 AA E1          	msend:	call	putm2
+0BE1A4 32                	fin:	pre	$32
+0BE1A5 41 EC 0D          		add	(bp_ram),%
+0BE1A8 9F                		rc				;	Carry CLAIR : arme, BASIC repondrait 'Syntax error'
+0BE1A9 07                		retf
+0BE1AA                   	
+0BE1AA                   	;	putm2 : message de la table mb (IL = son ecart, 1er octet = longueur)
+0BE1AA                   	;	puts  : X = texte, Y = longueur, a l'ecran (handle 0)
+0BE1AA 0C 58 E4 0B       	putm2:	mv	x,mb
+0BE1AE 45 43             		add	x,i
+0BE1B0 91 24             		mv	il,[x++]
+0BE1B2 FD 53             		mv	y,i
+0BE1B4 32                	puts:	pre	$32
+0BE1B5 CC D6 00          		mv	(cl),0
+0BE1B8 09 04             		mv	il,fcs_write_block
+0BE1BA 05 E4 FF 0F       		callf	fcs_call
+0BE1BE 06                		ret
+0BE1BF                   	
+0BE1BF                   	linkbas:
+0BE1BF                   	;	Pointeur de BTEXT $ et BDATA $
+0BE1BF 32                		pre	$32
+0BE1C0 8C 0E FD 0B       		mv	x,[baswrk]
+0BE1C4 08 72             		mv	a,$72
+0BE1C6 45 40             		add	x,a
+0BE1C8 04 DA E1          		call	bsearch
+0BE1CB 1C 0C             		jrc	bomb
+0BE1CD 32                		pre	$32
+0BE1CE A5 CB             		mv	(txtbas),y
+0BE1D0 04 DA E1          		call	bsearch
+0BE1D3 1C 04             		jrc	bomb
+0BE1D5 32                		pre	$32
+0BE1D6 A5 CE             		mv	(datbas),y
+0BE1D8 06                		ret
+0BE1D9 FF                	bomb:	reset
+0BE1DA                   	
+0BE1DA 09 41             	bsearch:mv	il,d6_search_phys
+0BE1DC 32                	memd2:	pre	$32
+0BE1DD E0 24 D7          		mv	(ch),[x++]
+0BE1E0 32                	memd:	pre	$32
+0BE1E1 CC D6 06          		mv	(cl),dev_memcard
+0BE1E4 05 E8 FF 0F       	icall:	callf	iocs_call
+0BE1E8 06                		ret
+0BE1E9                   	
+0BE1E9                   	;----------------------------------------------------------------------
+0BE1E9                   	;		Desinstallation : CALL &BE000 "-U"
+0BE1E9                   	;----------------------------------------------------------------------
+0BE1E9                   	;	Le pilote ne tient AUCUN vecteur au repos : il ne detourne la SIO que
+0BE1E9                   	;	le temps d'un appel (devmain la rend en jump00). Desinstaller, c'est
+0BE1E9                   	;	donc delier son en-tete de la chaine des devices, puis faire taper
+0BE1E9                   	;	SET et KILL a l'utilisateur : ce sont des commandes de MODE DIRECT,
+0BE1E9                   	;	qu'un programme ne peut pas executer.
+0BE1E9                   	;	Le bloc se retrouve par la CHAINE DES BLOCS de S1:, pas par d_link :
+0BE1E9                   	;	si un amorcage a perdu le maillon, le bloc est toujours la.
+0BE1E9                   	uninst:
+0BE1E9 8C 15 FC 0B       		mv	x,[s1_top]
+0BE1ED 95 84 12          		mv	y,[x+$12]
+0BE1F0 45 45             	un_blk:	add	x,y
+0BE1F2 90 04             		mv	a,[x]
+0BE1F4 60 FB             		cmp	a,$fb
+0BE1F6 1A 90             		jrnz	un_absent		;	Fin de la chaine des blocs
+0BE1F8 A4 00             		mv	(dest),x
+0BE1FA 0D 9E E4 0B       		mv	y,btop			;	Signature + nom, lus dans l'image (jamais relogee)
+0BE1FE 09 0C             		mv	il,12
+0BE200 04 9C E2          		call	compare
+0BE203 84 00             		mv	x,(dest)
+0BE205 95 84 11          		mv	y,[x+$11]		;	Taille du bloc (MV ne touche pas aux drapeaux)
+0BE208 1B 1A             		jrnz	un_blk
+0BE20A                   	
+0BE20A                   	;	Le deliage ne touche qu'a l'en-tete IOCS : on reconnait donc le bloc a
+0BE20A                   	;	cet en-tete, pas a sa taille (qui change a chaque version) - le nom de
+0BE20A                   	;	device 'L:',0 a sa place (bloc+2Ah), donc le lien suivant en bloc+22h.
+0BE20A                   	;	C'est la disposition de la 1.62 d'origine et de toutes les versions
+0BE20A                   	;	2026 ; aucune ne tient de vecteur au repos.
+0BE20A 08 2A             		mv	a,dvname-btop
+0BE20C 45 40             		add	x,a
+0BE20E 0D C8 E4 0B       		mv	y,dvname		;	'L:',0 de l'image
+0BE212 09 03             		mv	il,3
+0BE214 04 9C E2          		call	compare
+0BE217 1A 79             		jrnz	un_autre
+0BE219                   	
+0BE219                   	;	Aucun pilote AU-DESSUS du notre. Le KILL de PLINK.SYS ferait descendre
+0BE219                   	;	tous les blocs suivants SANS relocation : sans dommage pour TEXT.BAS et
+0BE219                   	;	DATA.BAS (la ROM les recale), fatal pour un autre pilote (mesure du
+0BE219                   	;	2026-09-25 avec BASEXT.SYS au-dessus : la machine tombe). Meme regle de
+0BE219                   	;	reconnaissance que l'installateur : signature $fb et bits $0c de
+0BE219                   	;	l'attribut.
+0BE219 84 00             		mv	x,(dest)
+0BE21B 95 84 11          	un_sup:	mv	y,[x+$11]
+0BE21E 45 45             		add	x,y
+0BE220 90 04             		mv	a,[x]
+0BE222 60 FB             		cmp	a,$fb
+0BE224 1A 29             		jrnz	un_delier		;	Fin de chaine : rien au-dessus
+0BE226 90 84 0C          		mv	a,[x+$0c]
+0BE229 64 0C             		test	a,$0c
+0BE22B 19 12             		jrz	un_sup
+0BE22D A4 03             		mv	(bottom),x
+0BE22F 0C 20 E4 0B       		mv	x,sup_m
+0BE233 0D 21 00 00       		mv	y,sup_e-sup_m
+0BE237 04 B4 E1          		call	puts
+0BE23A 84 03             		mv	x,(bottom)
+0BE23C 6C 04             		inc	x			;	Nom 8.3 du pilote fautif (11 octets)
+0BE23E 0D 0B 00 00       		mv	y,11
+0BE242 04 B4 E1          		call	puts
+0BE245 0C 41 E4 0B       		mv	x,sup2_m
+0BE249 0D 17 00 00       		mv	y,sup2_e-sup2_m
+0BE24D 12 33             		jr	un_fin
+0BE24F                   	
+0BE24F                   	;	Delier notre en-tete IOCS (bloc + ihead-btop), s'il est encore chaine
+0BE24F                   	un_delier:
+0BE24F 84 00             		mv	x,(dest)
+0BE251 08 22             		mv	a,ihead-btop
+0BE253 45 40             		add	x,a
+0BE255 A4 03             		mv	(bottom),x		;	Notre en-tete
+0BE257 0D A2 FC 0B       		mv	y,d_link
+0BE25B 94 05             	un_lnk:	mv	x,[y]
+0BE25D 6C 04             		inc	x
+0BE25F 18 19             		jrz	un_ok			;	$fffff : fin de chaine, plus chaine
+0BE261 7C 04             		dec	x
+0BE263 18 15             		jrz	un_ok			;	0 : chaine vide
+0BE265 A5 09             		mv	(offset),y		;	Emplacement du lien qui designe x
+0BE267 A4 06             		mv	(mdf),x
+0BE269 85 03             		mv	y,(bottom)
+0BE26B D7 05 06          		cmpp	(mdf),y
+0BE26E 18 04             		jrz	un_trouve
+0BE270 FD 54             		mv	y,x			;	Le lien suivant est le 1er champ de l'en-tete
+0BE272 13 19             		jr	un_lnk
+0BE274                   	un_trouve:
+0BE274 94 04             		mv	x,[x]			;	Notre successeur...
+0BE276 85 09             		mv	y,(offset)
+0BE278 B4 05             		mv	[y],x			;	...prend notre place
+0BE27A 0C 0E E3 0B       	un_ok:	mv	x,uok_m
+0BE27E 0D 4D 00 00       		mv	y,uok_e-uok_m
+0BE282 04 B4 E1          	un_fin:	call	puts
+0BE285 02 A4 E1          		jp	fin
+0BE288                   	
+0BE288                   	un_absent:
+0BE288 0C E4 E3 0B       		mv	x,abs_m
+0BE28C 0D 17 00 00       		mv	y,abs_e-abs_m
+0BE290 13 10             		jr	un_fin
+0BE292                   	un_autre:
+0BE292 0C FB E3 0B       		mv	x,oth_m
+0BE296 0D 25 00 00       		mv	y,oth_e-oth_m
+0BE29A 13 1A             		jr	un_fin
+0BE29C                   	
+0BE29C                   	;	compare : IL octets de [x] et de [y] ; Z si identiques
+0BE29C E0 24 06          	compare:	mv	(mdf),[x++]
+0BE29F 90 25             		mv	a,[y++]
+0BE2A1 63 06             		cmp	(mdf),a
+0BE2A3 1A 04             		jrnz	compare_e
+0BE2A5 7C 01             		dec	il
+0BE2A7 1B 0D             		jrnz	compare
+0BE2A9 06                	compare_e:	ret
+0BE2AA                   	
+0BE2AA 50 4C 49 4E 4B 43 	title:	db	'PLINKC ver 1.62 by Daisuke Mizobata',$0d,$0a
+0BE2B0 20 76 65 72 20 31 	
+0BE2B6 2E 36 32 20 62 79 	
+0BE2BC 20 44 61 69 73 75 	
+0BE2C2 6B 65 20 4D 69 7A 	
+0BE2C8 6F 62 61 74 61 0D 	
+0BE2CE 0A                	
+0BE2CF 62 61 73 65 64 20 		db	'based on PLINK ver 1.04 by N.Kon',$0d,$0a
+0BE2D5 6F 6E 20 50 4C 49 	
+0BE2DB 4E 4B 20 76 65 72 	
+0BE2E1 20 31 2E 30 34 20 	
+0BE2E7 62 79 20 4E 2E 4B 	
+0BE2ED 6F 6E 0D 0A       	
+0BE2F1 55 70 64 61 74 65 		db	'Update '
+0BE2F7 20                	
+0BE2F8 32 30 32 36 2E 31 		db	'2026.1'
+0BE2FE 20 62 79 20 4A 2D 		db	' by J-F.Albouy',$0d,$0a
+0BE304 46 2E 41 6C 62 6F 	
+0BE30A 75 79 0D 0A       	
+0BE30E                   	title_e:
+0BE30E                   	
+0BE30E                   	;	Messages de la desinstallation (affiches par puts : X, Y = longueur)
+0BE30E 55 6E 69 6E 73 74 	uok_m:	db	'Uninstalled. To free memory :',$0d,$0a
+0BE314 61 6C 6C 65 64 2E 	
+0BE31A 20 54 6F 20 66 72 	
+0BE320 65 65 20 6D 65 6D 	
+0BE326 6F 72 79 20 3A 0D 	
+0BE32C 0A                	
+0BE32D 53 45 54 20 20 22 	sk_m:	db	'SET  "S1:PLINK.SYS"," "',$0d,$0a
+0BE333 53 31 3A 50 4C 49 	
+0BE339 4E 4B 2E 53 59 53 	
+0BE33F 22 2C 22 20 22 0D 	
+0BE345 0A                	
+0BE346 4B 49 4C 4C 20 22 		db	'KILL "S1:PLINK.SYS"',$0d,$0a
+0BE34C 53 31 3A 50 4C 49 	
+0BE352 4E 4B 2E 53 59 53 	
+0BE358 22 0D 0A          	
+0BE35B                   	sk_e:
+0BE35B                   	uok_e:
+0BE35B                   	
+0BE35B                   	;	Messages de « deja installe » (2026)
+0BE35B 4C 3A 3F 00       	etat:	db	'L:?',0			;	Argument d'INIT : etat du pilote installe
+0BE35F 41 6C 72 65 61 64 	exo_m:	db	'Already exists (other version).',$0d,$0a
+0BE365 79 20 65 78 69 73 	
+0BE36B 74 73 20 28 6F 74 	
+0BE371 68 65 72 20 76 65 	
+0BE377 72 73 69 6F 6E 29 	
+0BE37D 2E 0D 0A          	
+0BE380                   	exo_e:
+0BE380 50 4C 49 4E 4B 2E 	exu_m:	db	'PLINK.SYS in S1: but not linked.',$0d,$0a
+0BE386 53 59 53 20 69 6E 	
+0BE38C 20 53 31 3A 20 62 	
+0BE392 75 74 20 6E 6F 74 	
+0BE398 20 6C 69 6E 6B 65 	
+0BE39E 64 2E 0D 0A       	
+0BE3A2 46 72 65 65 20 69 		db	'Free it, then install again :',$0d,$0a
+0BE3A8 74 2C 20 74 68 65 	
+0BE3AE 6E 20 69 6E 73 74 	
+0BE3B4 61 6C 6C 20 61 67 	
+0BE3BA 61 69 6E 20 3A 0D 	
+0BE3C0 0A                	
+0BE3C1                   	exu_e:
+0BE3C1 45 72 72 6F 72 3A 	exl_m:	db	'Error: L: used by another driver.',$0d,$0a
+0BE3C7 20 4C 3A 20 75 73 	
+0BE3CD 65 64 20 62 79 20 	
+0BE3D3 61 6E 6F 74 68 65 	
+0BE3D9 72 20 64 72 69 76 	
+0BE3DF 65 72 2E 0D 0A    	
+0BE3E4                   	exl_e:
+0BE3E4 50 4C 49 4E 4B 2E 	abs_m:	db	'PLINK.SYS not in S1:.',$0d,$0a
+0BE3EA 53 59 53 20 6E 6F 	
+0BE3F0 74 20 69 6E 20 53 	
+0BE3F6 31 3A 2E 0D 0A    	
+0BE3FB                   	abs_e:
+0BE3FB 45 72 72 6F 72 3A 	oth_m:	db	'Error: PLINK.SYS without L: header.',$0d,$0a
+0BE401 20 50 4C 49 4E 4B 	
+0BE407 2E 53 59 53 20 77 	
+0BE40D 69 74 68 6F 75 74 	
+0BE413 20 4C 3A 20 68 65 	
+0BE419 61 64 65 72 2E 0D 	
+0BE41F 0A                	
+0BE420                   	oth_e:
+0BE420 45 72 72 6F 72 3A 	sup_m:	db	'Error: driver above PLINK.SYS :',$0d,$0a
+0BE426 20 64 72 69 76 65 	
+0BE42C 72 20 61 62 6F 76 	
+0BE432 65 20 50 4C 49 4E 	
+0BE438 4B 2E 53 59 53 20 	
+0BE43E 3A 0D 0A          	
+0BE441                   	sup_e:
+0BE441 0D 0A 55 6E 69 6E 	sup2_m:	db	$0d,$0a,'Uninstall it first.',$0d,$0a
+0BE447 73 74 61 6C 6C 20 	
+0BE44D 69 74 20 66 69 72 	
+0BE453 73 74 2E 0D 0A    	
+0BE458                   	sup2_e:
+0BE458                   	
+0BE458                   	;	Messages de l'installation (affiches par putm2 : IL = ecart depuis mb,
+0BE458                   	;	1er octet = longueur ; la table doit tenir sous 256 octets)
+0BE458                   	mb:
+0BE458 11 41 6C 72 65 61 	exi_m:	db	17,'Already exists.',$0d,$0a
+0BE45E 64 79 20 65 78 69 	
+0BE464 73 74 73 2E 0D 0A 	
+0BE46A 14 4E 6F 74 20 65 	mem_m:	db	20,'Not enough memory.',$0d,$0a
+0BE470 6E 6F 75 67 68 20 	
+0BE476 6D 65 6D 6F 72 79 	
+0BE47C 2E 0D 0A          	
+0BE47F 0C 49 6E 73 74 61 	ins_m:	db	12,'Installed.',$0d,$0a
+0BE485 6C 6C 65 64 2E 0D 	
+0BE48B 0A                	
+0BE48C 11 4F 76 65 72 20 	pg_m:	db	17,'Over two pages.',$0d,$0a
+0BE492 74 77 6F 20 70 61 	
+0BE498 67 65 73 2E 0D 0A 	
+0BE49E                   	
+0BE49E                   	;----------------------------------------------------------------------
+0BE49E                   	;		En-tete du fichier d'en-tete de l'appareil
+0BE49E                   	;----------------------------------------------------------------------
+0BE49E FB 50 4C 49 4E 4B 	btop:	db	$fb,'PLINK   SYS'		;Nom du bloc de peripherique
+0BE4A4 20 20 20 53 59 53 	
+0BE4AA 25                			db	$25						;Attributs de bloc de memoire
+0BE4AB 00 00 00 00       			dw	0,0						;Date et heure
+0BE4AF FE 0C 00          			dp	blen					;Nombre d'octets dans le bloc memoire
+0BE4B2 00 00             			dw	0
+0BE4B4 FE 0C 00          			dp	blen					;Nombre d'octets de l'entite de fichier
+0BE4B7 FE 0C 00          			dp	blen					;Nombre d'octets dans le bloc memoire
+0BE4BA 00 00 00 00 00 00 			dp	0,0
+0BE4C0                   	;----------------------------------------------------------------------
+0BE4C0                   	;		En-tete du pilote de peripherique
+0BE4C0                   	;----------------------------------------------------------------------
+0BE4C0 00 00 00          	ihead:		dp	0			;Adresse du prochain en-tete de pilote de peripherique
+0BE4C3 00                	devno:		db	0			;Numero d'appareil (variable)
+0BE4C4 83                			db	$83				;Attribut de peripherique (identique a E :)
+0BE4C5 0A E5 0B          			rel dp	devmain		;Adresse du corps du pilote de peripherique
+0BE4C8 4C 3A 00          	dvname:		db	'L:',0		;Nom de l'appareil
+0BE4CB                   	;----------------------------------------------------------------------
+0BE4CB                   	;		Media parameter block
+0BE4CB                   	;----------------------------------------------------------------------
+0BE4CB                   	;Version de 128 Ko
+0BE4CB F0                	mpb128:		db	$f0			;Descripteur de media (peut etre approprie)
+0BE4CC 80 00             			dw	sectsiz			;Nombre d'octets par secteur
+0BE4CE 03                			db	4-1				;(Nombre d'octets par secteur / 32) -1
+0BE4CF 02                			db	2				;log 2 (nombre d'octets par secteur / 32)
+0BE4D0 00                			db	0				;???
+0BE4D1 01                			db	1				;???
+0BE4D2 00 00             			dw	0				;Premier numero de secteur de zone FAT
+0BE4D4 08                			db	8				;???
+0BE4D5 80 00             			dw	128				;Nombre maximum de fichiers stockables
+0BE4D7 2C 00             			dw	dtop			;Numero du secteur de depart de la zone de donnees
+0BE4D9 D5 03             			dw	980+1			;Nombre total de secteurs dans la zone de donnees + 1
+0BE4DB 0C                			db	12				;Nombre total de secteurs dans la zone FAT
+0BE4DC 0C 00             			dw	12				;Premier numero de secteur de la zone DIR
+0BE4DE                   	;Donnees referencees dans DS
+0BE4DE 0C 00             			dw	12				;Premier numero de secteur de la zone DIR
+0BE4E0                   	;Version de 512 Ko
+0BE4E0 F0                	mpb512:		db	$f0
+0BE4E1 80 00             			dw	sectsiz
+0BE4E3 03                			db	4-1
+0BE4E4 02                			db	2
+0BE4E5 00                			db	0
+0BE4E6 01                			db	1
+0BE4E7 00 00             			dw	0
+0BE4E9 08                			db	8
+0BE4EA 80 00             			dw	128
+0BE4EC 50 00             			dw	80			;Numero du secteur de depart de la zone de donnees
+0BE4EE B1 0F             			dw	4016+1		;Nombre total de secteurs dans la zone de donnees + 1
+0BE4F0 30                			db	48			;Nombre total de secteurs dans la zone FAT
+0BE4F1 30 00             			dw	48			;Premier numero de secteur de la zone DIR
+0BE4F3                   	;
+0BE4F3 30 00             			dw	48
+0BE4F5                   	;Version de 256 Ko (ajout 2026). Meme regle que les deux autres : FAT,
+0BE4F5                   	;puis 32 secteurs de repertoire (128 fichiers), puis les donnees, pour
+0BE4F5                   	;256K/128 = 2048 secteurs : 24 + 32 + 1992. FAT de 12 bits : 24 secteurs
+0BE4F5                   	;= 2048 entrees >= 1992+2. Doit egaler set_geometry('2') d'APLINKS 1.07.
+0BE4F5 F0                	mpb256:		db	$f0
+0BE4F6 80 00             			dw	sectsiz
+0BE4F8 03                			db	4-1
+0BE4F9 02                			db	2
+0BE4FA 00                			db	0
+0BE4FB 01                			db	1
+0BE4FC 00 00             			dw	0
+0BE4FE 08                			db	8
+0BE4FF 80 00             			dw	128
+0BE501 38 00             			dw	56			;Numero du secteur de depart de la zone de donnees
+0BE503 C9 07             			dw	1992+1		;Nombre total de secteurs dans la zone de donnees + 1
+0BE505 18                			db	24			;Nombre total de secteurs dans la zone FAT
+0BE506 18 00             			dw	24			;Premier numero de secteur de la zone DIR
+0BE508                   	;
+0BE508 18 00             			dw	24
+0BE50A                   	;----------------------------------------------------------------------
+0BE50A                   	;		Corps
+0BE50A                   	;----------------------------------------------------------------------
+0BE50A                   	suborg		0
+0BE50A                   	byte		i_work1,i_work2
+0BE50A                   	word		sect_num,sect_num2
+0BE50A                   	byte		flag,rxdata,i_work3,subko
+0BE50A                   	pntr		cachep,vct_rsv,before
+0BE50A 2F                	devmain:	pushu	imr				;Arretez l'interruption et reecrivez le vecteur de reception SIO
+0BE50B 2C                			pushu	x
+0BE50C 30                			pre	$30
+0BE50D 49 EC 13          			sub	(bp_ram),%
+0BE510 8C D5 FC 0B       			mv	x,[intv_sio_rx]
+0BE514 A4 0D             			mv	(vct_rsv),x	
+0BE516 0C 6C EB 0B       			rel mv	x,rcv
+0BE51A AC D5 FC 0B       			mv	[intv_sio_rx],x
+0BE51E 3C                			popu	x
+0BE51F 3F                			popu	imr
+0BE520                   	;	2026 : le pilote prend SA vitesse (drv_ucr), plus celle du COM: du BASIC
+0BE520                   	;	(sio_baud, 0BFD33h) que la 1.62 suivait. Un RESET remet sio_baud a 1200
+0BE520                   	;	bauds (03Ch) et desaccordait le pilote du PC ; drv_ucr est dans le bloc,
+0BE520                   	;	qui survit au RESET, et le COM: des programmes BASIC n'est pas touche.
+0BE520 D0 08 46 E6 0B    			rel mv	(i_work3),[drv_ucr]	;Charger les parametres du pilote
+0BE525 71 08 FD          			and	(i_work3),$fd	   		;Ce force a 8 bits
+0BE528 22                			pre	$22
+0BE529 C0 08 F7          			ex	(i_work3),(ucr);Parametrage de la SIO & conservation du contenu precedent
+0BE52C 22                			pre	$22
+0BE52D C8 09 F1          			mv	(subko),(koh)	;Enregistrer KOH
+0BE530 30                			pre	$30
+0BE531 79 F1 60          			or	(koh),$60		;Activer DTR, RR
+0BE534                   	;
+0BE534 04 9C E9          		rel call	main
+0BE537                   	;
+0BE537                   	_blk00005_t:
+0BE537 30                				pre	$30
+0BE538 65 F8 10          				test	(usr),$10
+0BE53B 19 06             				jrz	_blk00005_t				;Attendre la fin de la transmission
+0BE53D                   	_blk00005_e:
+0BE53D 30                			pre	$30
+0BE53E C8 F7 08          			mv	(ucr),(i_work3)	;Restaurer le parametre SIO
+0BE541 30                			pre	$30
+0BE542 C8 F1 09          			mv	(koh),(subko)		;Restaurer KOH
+0BE545 65 06 02          			test	(flag),2
+0BE548 18 0E             			jrz	jump00						;[BRK] a ete presse?
+0BE54A 08 02             			mv	a,$02
+0BE54C 1C 0A             			jrc	jump00
+0BE54E 66 BE FC 0B 80    	brkloop:	test	[softint],$80		;Attendez que la pause soit liberee
+0BE553 1B 07             			jrnz	brkloop
+0BE555 08 FF             			mv	a,$ff						;Traitement en cas de pression
+0BE557 97                			sc
+0BE558 2F                	jump00:		pushu	imr					;Restaurer le vecteur de reception SIO
+0BE559 2C                			pushu	x
+0BE55A 84 0D             			mv	x,(vct_rsv)
+0BE55C AC D5 FC 0B       			mv	[intv_sio_rx],x
+0BE560 30                			pre	$30
+0BE561 47 EC 13          			pmdf	(bp_ram),%
+0BE564 3C                			popu	x
+0BE565 3F                			popu	imr
+0BE566 07                			retf
+0BE567                   	;----------------------------------------------------------------------
+0BE567                   	;		Diverses commandes
+0BE567                   	;----------------------------------------------------------------------
+0BE567                   	;----------------------------------------------------------------------
+0BE567                   	;		INIT "L:?" : etat du pilote (ajout 2026)
+0BE567                   	;----------------------------------------------------------------------
+0BE567                   	;	Affiche 'L: 128K, device 10, block &80018'. Rien n'est envoye au
+0BE567                   	;	serveur et les tampons ne sont pas touches (pas de buffer_clr).
+0BE567 4C 3A 20          	st_l:		db	'L: '
+0BE56A                   	st_l_e:
+0BE56A 31 32 38 4B       	st_128:		db	'128K'
+0BE56E 35 31 32 4B       	st_512:		db	'512K'
+0BE572 32 35 36 4B       	st_256:		db	'256K'
+0BE576 4E 6F 20 32 35 36 	st_no256:	db	'No 256K reply from server: 128K.',$0d,$0a
+0BE57C 4B 20 72 65 70 6C 	
+0BE582 79 20 66 72 6F 6D 	
+0BE588 20 73 65 72 76 65 	
+0BE58E 72 3A 20 31 32 38 	
+0BE594 4B 2E 0D 0A       	
+0BE598                   	st_no256_e:
+0BE598 53 65 72 76 65 72 	st_srv:		db	'Server mode: '
+0BE59E 20 6D 6F 64 65 3A 	
+0BE5A4 20                	
+0BE5A5                   	st_srv_e:
+0BE5A5 55 6E 6B 6E 6F 77 	st_unk:		db	'Unknown INIT option. Help: INIT "L:H"',$0d,$0a
+0BE5AB 6E 20 49 4E 49 54 	
+0BE5B1 20 6F 70 74 69 6F 	
+0BE5B7 6E 2E 20 48 65 6C 	
+0BE5BD 70 3A 20 49 4E 49 	
+0BE5C3 54 20 22 4C 3A 48 	
+0BE5C9 22 0D 0A          	
+0BE5CC                   	st_unk_e:
+0BE5CC                   	;	INIT "L:H" : la taille du bloc est ecrite en decimal A L'ASSEMBLAGE
+0BE5CC                   	;	(blen est une constante ; % entre deux valeurs = modulo). PARENTHESES
+0BE5CC                   	;	OBLIGATOIRES : le modulo lie MOINS fort que '+' dans ce langage (comme
+0BE5CC                   	;	oprlevel_set du moteur C), donc '0'+blen%10 vaudrait ('0'+blen)%10.
+0BE5CC 50 4C 49 4E 4B 43 	st_ver:		db	'PLINKC 1.62-'
+0BE5D2 20 31 2E 36 32 2D 	
+0BE5D8 32 30 32 36 2E 31 		db	'2026.1'
+0BE5DE 2C 20             			db	', '
+0BE5E0 33 33 32 36       			db	'0'+(blen/1000),'0'+((blen/100)%10),'0'+((blen/10)%10),'0'+(blen%10)
+0BE5E4 20 62 79 74 65 73 			db	' bytes',$0d,$0a
+0BE5EA 0D 0A             	
+0BE5EC                   	st_ver_e:
+0BE5EC 49 4E 49 54 20 22 	st_cmd:		db	'INIT "L:x" 1/2/5=128/256/512K B=speed',$0d,$0a
+0BE5F2 4C 3A 78 22 20 31 	
+0BE5F8 2F 32 2F 35 3D 31 	
+0BE5FE 32 38 2F 32 35 36 	
+0BE604 2F 35 31 32 4B 20 	
+0BE60A 42 3D 73 70 65 65 	
+0BE610 64 0D 0A          	
+0BE613 44 20 64 69 73 63 			db	'D disc, I clear, ? state, T test [key]'	;SANS CR LF : voir help
+0BE619 2C 20 49 20 63 6C 	
+0BE61F 65 61 72 2C 20 3F 	
+0BE625 20 73 74 61 74 65 	
+0BE62B 2C 20 54 20 74 65 	
+0BE631 73 74 20 5B 6B 65 	
+0BE637 79 5D             	
+0BE639                   	st_cmd_e:
+0BE639 20 64 65 76 20    	st_dev:		db	' dev '
+0BE63E                   	st_dev_e:
+0BE63E 20 62 6C 6F 63 6B 	st_blk:		db	' block &'
+0BE644 20 26             	
+0BE646                   	st_blk_e:
+0BE646                   	;	Vitesse (2026) : drv_ucr est l'octet ecrit dans ucr a chaque appel ;
+0BE646                   	;	INIT "L:Bnnnnn" le change, il survit au RESET (il est dans le bloc).
+0BE646 78                	drv_ucr:	db	def_ucr
+0BE647 31 39 39 36 34 38 	st_bauds:	db	'19','96','48','24','12','60','30'	;Code de vitesse 7..1
+0BE64D 32 34 31 32 36 30 	
+0BE653 33 30             	
+0BE655 20 20 33 30 30 20 	st_bnames:	db	'  300','  600',' 1200',' 2400',' 4800',' 9600','19200'
+0BE65B 20 36 30 30 20 31 	
+0BE661 32 30 30 20 32 34 	
+0BE667 30 30 20 34 38 30 	
+0BE66D 30 20 39 36 30 30 	
+0BE673 31 39 32 30 30    	
+0BE678 62 70 73          	st_bps:		db	'bps'
+0BE67B 20                	st_sp:		db	' '
+0BE67C 53 70 65 65 64 3A 	st_spd:		db	'Speed:'
+0BE682                   	st_spd_e:
+0BE682 53 65 72 76 65 72 	st_tok:		db	'Server OK: '
+0BE688 20 4F 4B 3A 20    	
+0BE68D                   	st_tok_e:
+0BE68D 4E 6F 20 72 65 70 	st_tno:		db	'No reply (speed? cable? APLINKS<1.07)',$0d,$0a
+0BE693 6C 79 20 28 73 70 	
+0BE699 65 65 64 3F 20 63 	
+0BE69F 61 62 6C 65 3F 20 	
+0BE6A5 41 50 4C 49 4E 4B 	
+0BE6AB 53 3C 31 2E 30 37 	
+0BE6B1 29 0D 0A          	
+0BE6B4                   	st_tno_e:
+0BE6B4 0D 0A             	st_crlf:	db	$0d,$0a
+0BE6B6 31                	st_mode:	db	'1'				;Mode choisi par INIT "L:1"/"L:2"/"L:5"
+0BE6B7                   	
+0BE6B7                   	;	cmd3f_set : adopter la geometrie X (mpb) pour le mode A ('1','2','5')
+0BE6B7 A8 B6 E6 0B       	cmd3f_set:	rel mv	[st_mode],a
+0BE6BB AC 97 E9 0B       			rel mv	[getmpb+1],x
+0BE6BF 92 84 0C          			mv	ba,[x+$c]
+0BE6C2 AA 1E EC 0B       			rel mv	[secpatch+1],ba
+0BE6C6 06                			ret
+0BE6C7                   	
+0BE6C7                   	;	st_puts : X = texte, Y = longueur, a l'ecran (handle 0)
+0BE6C7 30                	st_puts:	pre	$30
+0BE6C8 CC D6 00          			mv	(cl),0
+0BE6CB 09 04             			mv	il,fcs_write_block
+0BE6CD 05 E4 FF 0F       			callf	fcs_call
+0BE6D1 06                			ret
+0BE6D2                   	
+0BE6D2                   	;	st_dec : A en decimal, sans zero de tete
+0BE6D2 A0 00             	st_dec:		mv	(i_work1),a			;Reste a ecrire
+0BE6D4 CC 01 00          			mv	(i_work2),0			;Aucun chiffre ecrit encore
+0BE6D7 08 64             			mv	a,100
+0BE6D9 04 E6 E6          		rel call	st_digit
+0BE6DC 08 0A             			mv	a,10
+0BE6DE 04 E6 E6          		rel call	st_digit
+0BE6E1 CC 01 01          			mv	(i_work2),1			;Les unites s'ecrivent toujours
+0BE6E4 08 01             			mv	a,1
+0BE6E6 09 30             	st_digit:	mv	il,'0'
+0BE6E8 63 00             	st_digit_1:	cmp	(i_work1),a
+0BE6EA 1C 06             			jrc	st_digit_2			;Reste < poids
+0BE6EC 4B 00             			sub	(i_work1),a
+0BE6EE 6C 01             			inc	il
+0BE6F0 13 0A             			jr	st_digit_1
+0BE6F2 FD 01             	st_digit_2:	mv	a,il
+0BE6F4 60 30             			cmp	a,'0'
+0BE6F6 1A 05             			jrnz	st_digit_3
+0BE6F8 65 01 01          			test	(i_work2),1
+0BE6FB 18 0D             			jrz	st_ret				;Zero de tete : pas ecrit
+0BE6FD CC 01 01          	st_digit_3:	mv	(i_work2),1
+0BE700                   	;	st_putc : A a l'ecran (handle 0)
+0BE700 30                	st_putc:	pre	$30
+0BE701 CC D6 00          			mv	(cl),0
+0BE704 09 06             			mv	il,fcs_write_byte
+0BE706 05 E4 FF 0F       			callf	fcs_call
+0BE70A 06                	st_ret:		ret
+0BE70B                   	
+0BE70B                   	;	st_hex5 : X en hexadecimal sur 5 chiffres
+0BE70B A4 10             	st_hex5:	mv	(before),x
+0BE70D 80 12             			mv	a,(before+2)
+0BE70F 04 1F E7          		rel call	st_nib
+0BE712 80 11             			mv	a,(before+1)
+0BE714 04 19 E7          		rel call	st_hex2
+0BE717 80 10             			mv	a,(before)
+0BE719 28                	st_hex2:	pushu	a
+0BE71A EE                			swap	a
+0BE71B 04 1F E7          		rel call	st_nib
+0BE71E 38                			popu	a
+0BE71F 70 0F             	st_nib:		and	a,$0f
+0BE721 40 30             			add	a,'0'
+0BE723 60 3A             			cmp	a,'9'+1
+0BE725 1D 27             			jrc	st_putc
+0BE727 40 07             			add	a,'A'-'9'-1
+0BE729 13 2B             			jr	st_putc
+0BE72B                   	
+0BE72B                   	;	st_pmode : le mode retenu, '128K', '256K' ou '512K'
+0BE72B 88 B6 E6 0B       	st_pmode:	rel mv	a,[st_mode]
+0BE72F 0C 6A E5 0B       	st_pmodea:	rel mv	x,st_128			;Entree avec le mode dans A
+0BE733 60 35             			cmp	a,'5'
+0BE735 1A 04             			jrnz	st_pmode_0
+0BE737 0C 6E E5 0B       			rel mv	x,st_512
+0BE73B 60 32             	st_pmode_0:	cmp	a,'2'
+0BE73D 1A 04             			jrnz	st_pmode_1
+0BE73F 0C 72 E5 0B       			rel mv	x,st_256
+0BE743 0D 04 00 00       	st_pmode_1:	mv	y,4
+0BE747 04 C7 E6          		rel call	st_puts
+0BE74A 06                			ret
+0BE74B                   	
+0BE74B                   	;	st_pbaud : ' ' et la vitesse du pilote, '19200bps' ou ' 9600bps'...
+0BE74B 0C 7B E6 0B       	st_pbaud:	rel mv	x,st_sp
+0BE74F 0D 01 00 00       			mv	y,1
+0BE753 04 C7 E6          		rel call	st_puts
+0BE756 88 46 E6 0B       			rel mv	a,[drv_ucr]
+0BE75A EE                			swap	a
+0BE75B 70 07             			and	a,$07				;Code de vitesse, 1..7
+0BE75D 0C 55 E6 0B       			rel mv	x,st_bnames
+0BE761 0D 05 00 00       			mv	y,5
+0BE765 7C 00             	st_pbaud_1:	dec	a
+0BE767 18 04             			jrz	st_pbaud_2
+0BE769 45 45             			add	x,y
+0BE76B 13 08             			jr	st_pbaud_1
+0BE76D                   	st_pbaud_2:
+0BE76D 04 C7 E6          		rel call	st_puts
+0BE770 0C 78 E6 0B       			rel mv	x,st_bps
+0BE774 0D 03 00 00       			mv	y,3
+0BE778 04 C7 E6          		rel call	st_puts
+0BE77B 06                			ret
+0BE77C                   	
+0BE77C                   	;----------------------------------------------------------------------
+0BE77C                   	;		INIT "L:Bnnnnn" : vitesse du pilote (ajout 2026)
+0BE77C                   	;----------------------------------------------------------------------
+0BE77C                   	;	Les deux premiers chiffres suffisent a distinguer les sept vitesses.
+0BE77C                   	;	Prend effet a l'appel suivant (celui-ci tourne deja a l'ancienne).
+0BE77C                   	;	Rien n'est envoye au serveur.
+0BE77C 90 84 01          	baud:		mv	a,[x+1]
+0BE77F A0 00             			mv	(i_work1),a
+0BE781 90 84 02          			mv	a,[x+2]
+0BE784 A0 01             			mv	(i_work2),a
+0BE786 0D 47 E6 0B       			rel mv	y,st_bauds
+0BE78A 09 07             			mv	il,7				;Code de la vitesse essayee
+0BE78C 90 25             	baud_1:		mv	a,[y++]
+0BE78E 63 00             			cmp	(i_work1),a
+0BE790 90 25             			mv	a,[y++]				;MV ne touche pas aux drapeaux
+0BE792 1A 04             			jrnz	baud_2
+0BE794 63 01             			cmp	(i_work2),a
+0BE796 18 11             			jrz	baud_3
+0BE798 7C 01             	baud_2:		dec	il
+0BE79A 1B 10             			jrnz	baud_1
+0BE79C 0C A5 E5 0B       			rel mv	x,st_unk			;Vitesse inconnue
+0BE7A0 0D 27 00 00       			mv	y,st_unk_e-st_unk
+0BE7A4 04 C7 E6          		rel call	st_puts
+0BE7A7 9F                			rc
+0BE7A8 06                			ret
+0BE7A9 FD 01             	baud_3:		mv	a,il
+0BE7AB EE                			swap	a
+0BE7AC 78 08             			or	a,$08				;Sans parite, 8 bits, 1 stop
+0BE7AE A8 46 E6 0B       			rel mv	[drv_ucr],a
+0BE7B2 0C 7C E6 0B       			rel mv	x,st_spd
+0BE7B6 0D 06 00 00       			mv	y,st_spd_e-st_spd
+0BE7BA 04 C7 E6          		rel call	st_puts
+0BE7BD 04 4B E7          		rel call	st_pbaud
+0BE7C0 0C B4 E6 0B       			rel mv	x,st_crlf
+0BE7C4 0D 02 00 00       			mv	y,2
+0BE7C8 04 C7 E6          		rel call	st_puts
+0BE7CB 9F                			rc
+0BE7CC 06                			ret
+0BE7CD                   	
+0BE7CD                   	;----------------------------------------------------------------------
+0BE7CD                   	;		INIT "L:T" : test de la liaison (ajout 2026)
+0BE7CD                   	;----------------------------------------------------------------------
+0BE7CD                   	;	Envoie 'Q' et attend la reponse (~1 s) : seul APLINKS 1.07 repond. Le
+0BE7CD                   	;	pocket ne peut pas connaitre la vitesse du PC ; il constate seulement
+0BE7CD                   	;	qu'on lui repond, ou non. Le mode du pilote n'est pas change.
+0BE7CD 08 51             	ltest:		mv	a,'Q'
+0BE7CF 04 26 EB          		rel call	send_one
+0BE7D2 04 48 EB          		rel call	receive_one_s
+0BE7D5 65 06 02          			test	(flag),2
+0BE7D8 1A 22             			jrnz	ltest_n
+0BE7DA A0 00             			mv	(i_work1),a			;Mode du serveur
+0BE7DC 0C 82 E6 0B       			rel mv	x,st_tok
+0BE7E0 0D 0B 00 00       			mv	y,st_tok_e-st_tok
+0BE7E4 04 C7 E6          		rel call	st_puts
+0BE7E7 80 00             			mv	a,(i_work1)
+0BE7E9 04 2F E7          		rel call	st_pmodea
+0BE7EC 04 4B E7          		rel call	st_pbaud
+0BE7EF 0C B4 E6 0B       			rel mv	x,st_crlf
+0BE7F3 0D 02 00 00       			mv	y,2
+0BE7F7 04 C7 E6          		rel call	st_puts
+0BE7FA 9F                			rc
+0BE7FB 06                			ret
+0BE7FC 71 06 FD          	ltest_n:	and	(flag),$fd			;Pas une erreur de liaison pour la ROM
+0BE7FF 0C 8D E6 0B       			rel mv	x,st_tno
+0BE803 0D 27 00 00       			mv	y,st_tno_e-st_tno
+0BE807 04 C7 E6          		rel call	st_puts
+0BE80A 9F                			rc
+0BE80B 06                			ret
+0BE80C                   	
+0BE80C                   	;----------------------------------------------------------------------
+0BE80C                   	;		INIT "L:H" : version, taille, etat, commandes (ajout 2026)
+0BE80C                   	;----------------------------------------------------------------------
+0BE80C 0C CC E5 0B       	help:		rel mv	x,st_ver
+0BE810 0D 20 00 00       			mv	y,st_ver_e-st_ver
+0BE814 04 C7 E6          		rel call	st_puts
+0BE817 04 50 E8          		rel call	status
+0BE81A 0C EC E5 0B       			rel mv	x,st_cmd
+0BE81E 0D 4D 00 00       			mv	y,st_cmd_e-st_cmd
+0BE822 04 C7 E6          		rel call	st_puts
+0BE825                   	;	Attente d'une touche (2026-10-06). L'ecran a 4 lignes : la 4e est ecrite
+0BE825                   	;	SANS retour a la ligne, sinon l'ecran defilerait avant la pause et la
+0BE825                   	;	1re serait deja perdue. Tampon clavier vide d'abord (touche d'avance),
+0BE825                   	;	puis IOCS clavier 43h, a bit 7 = 1 : attente en basse consommation.
+0BE825 30                			pre	$30
+0BE826 CC D6 01          			mv	(cl),dev_key
+0BE829 30                			pre	$30
+0BE82A CC D7 00          			mv	(ch),0
+0BE82D 09 45             			mv	il,d1_buffer_clear
+0BE82F 05 E8 FF 0F       			callf	iocs_call
+0BE833 30                			pre	$30
+0BE834 CC D6 01          			mv	(cl),dev_key
+0BE837 30                			pre	$30
+0BE838 CC D7 00          			mv	(ch),0
+0BE83B 08 80             			mv	a,$80
+0BE83D 09 43             			mv	il,d1_key_read
+0BE83F 05 E8 FF 0F       			callf	iocs_call
+0BE843 0C B4 E6 0B       			rel mv	x,st_crlf
+0BE847 0D 02 00 00       			mv	y,2
+0BE84B 04 C7 E6          		rel call	st_puts
+0BE84E 9F                			rc
+0BE84F 06                			ret
+0BE850                   	
+0BE850 0C 67 E5 0B       	status:		rel mv	x,st_l
+0BE854 0D 03 00 00       			mv	y,st_l_e-st_l
+0BE858 04 C7 E6          		rel call	st_puts
+0BE85B 04 2B E7          		rel call	st_pmode
+0BE85E 04 4B E7          		rel call	st_pbaud
+0BE861 0C 39 E6 0B       			rel mv	x,st_dev
+0BE865 0D 05 00 00       			mv	y,st_dev_e-st_dev
+0BE869 04 C7 E6          		rel call	st_puts
+0BE86C 88 C3 E4 0B       			rel mv	a,[devno]
+0BE870 04 D2 E6          		rel call	st_dec
+0BE873 0C 3E E6 0B       			rel mv	x,st_blk
+0BE877 0D 08 00 00       			mv	y,st_blk_e-st_blk
+0BE87B 04 C7 E6          		rel call	st_puts
+0BE87E 0C 9E E4 0B       			rel mv	x,btop				;Adresse du bloc installe (relogee)
+0BE882 04 0B E7          		rel call	st_hex5
+0BE885 0C B4 E6 0B       			rel mv	x,st_crlf
+0BE889 0D 02 00 00       			mv	y,2
+0BE88D 04 C7 E6          		rel call	st_puts
+0BE890 9F                			rc
+0BE891 06                			ret
+0BE892                   	
+0BE892 90 04             	init:		mv	a,[x]
+0BE894 60 61             			cmp	a,'a'				;Minuscule -> majuscule (ajout 2026)
+0BE896 1C 06             			jrc	init_0
+0BE898 60 7B             			cmp	a,'z'+1
+0BE89A 1E 02             			jrnc	init_0
+0BE89C 70 DF             			and	a,$df
+0BE89E 60 3F             	init_0:		cmp	a,'?'
+0BE8A0 19 52             			jrz	status
+0BE8A2 60 48             			cmp	a,'H'
+0BE8A4 19 9A             			jrz	help
+0BE8A6 60 42             			cmp	a,'B'
+0BE8A8 1A 03             			jrnz	init_1
+0BE8AA 02 7C E7          			rel jp	baud
+0BE8AD 60 54             	init_1:		cmp	a,'T'
+0BE8AF 1A 03             			jrnz	init_2
+0BE8B1 02 CD E7          			rel jp	ltest
+0BE8B4 0C CB E4 0B       	init_2:		rel mv	x,mpb128
+0BE8B8 60 31             			cmp	a,'1'
+0BE8BA 18 10             			jrz	cmd3f_15
+0BE8BC 0C F5 E4 0B       			rel mv	x,mpb256			;256K : ajout 2026
+0BE8C0 60 32             			cmp	a,'2'
+0BE8C2 18 08             			jrz	cmd3f_15
+0BE8C4 0C E0 E4 0B       			rel mv	x,mpb512
+0BE8C8 60 35             			cmp	a,'5'
+0BE8CA 1A 78             			jrnz	cmd3f_d
+0BE8CC                   	;	INIT "L:1", "L:2", "L:5" : comme la 1.62, 'S' puis le mode, sans reponse.
+0BE8CC                   	;	Puis (2026) 'Q' : le serveur rend le mode qu'il utilise REELLEMENT et on
+0BE8CC                   	;	l'adopte. Un serveur qui garde un disque precharge dans un autre mode
+0BE8CC                   	;	ferait sinon lire la FAT comme un repertoire, et demander des secteurs
+0BE8CC                   	;	absurdes (APLINKS 1.06 en est tombe, le 2026-10-06). Sans reponse dans
+0BE8CC                   	;	le delai (APLINKS 1.06, DOS 1.03 : 'Q' ignore), on garde le mode
+0BE8CC                   	;	demande, comme la 1.62 - sauf 256K, que ces serveurs ne connaissent
+0BE8CC                   	;	pas : 128K (ce qu'ils font eux-memes d'un disque vide), et on le dit.
+0BE8CC A0 01             	cmd3f_15:	mv	(i_work2),a			;Mode demande
+0BE8CE 04 B7 E6          		rel call	cmd3f_set
+0BE8D1 04 C1 EB          		rel call	check_sect
+0BE8D4 08 53             			mv	a,'S'
+0BE8D6 04 26 EB          		rel call	send_one
+0BE8D9 80 01             			mv	a,(i_work2)
+0BE8DB 04 26 EB          		rel call	send_one
+0BE8DE 08 51             			mv	a,'Q'				;Quel mode utilises-tu ?
+0BE8E0 04 26 EB          		rel call	send_one
+0BE8E3 04 48 EB          		rel call	receive_one_s
+0BE8E6 65 06 02          			test	(flag),2
+0BE8E9 1A 3A             			jrnz	cmd3f_q0			;Pas de reponse : serveur ancien
+0BE8EB 0C E0 E4 0B       			rel mv	x,mpb512
+0BE8EF 60 35             			cmp	a,'5'
+0BE8F1 18 10             			jrz	cmd3f_q1
+0BE8F3 0C F5 E4 0B       			rel mv	x,mpb256
+0BE8F7 60 32             			cmp	a,'2'
+0BE8F9 18 08             			jrz	cmd3f_q1
+0BE8FB 0C CB E4 0B       			rel mv	x,mpb128
+0BE8FF 60 31             			cmp	a,'1'
+0BE901 1A 7C             			jrnz	cmd3f_2				;Reponse inconnue : on garde
+0BE903 63 01             	cmd3f_q1:	cmp	(i_work2),a
+0BE905 18 78             			jrz	cmd3f_2				;Le serveur est dans le mode demande
+0BE907 04 B7 E6          		rel call	cmd3f_set
+0BE90A 0C 98 E5 0B       			rel mv	x,st_srv			;...et on le dit
+0BE90E 0D 0D 00 00       			mv	y,st_srv_e-st_srv
+0BE912 04 C7 E6          		rel call	st_puts
+0BE915 04 2B E7          		rel call	st_pmode
+0BE918 0C B4 E6 0B       			rel mv	x,st_crlf
+0BE91C 0D 02 00 00       			mv	y,2
+0BE920 04 C7 E6          		rel call	st_puts
+0BE923 12 5A             			jr	cmd3f_2
+0BE925 71 06 FD          	cmd3f_q0:	and	(flag),$fd			;Pas une erreur de liaison : on continue
+0BE928 80 01             			mv	a,(i_work2)
+0BE92A 60 32             			cmp	a,'2'
+0BE92C 1A 51             			jrnz	cmd3f_2				;128K ou 512K : on garde
+0BE92E 0C 76 E5 0B       			rel mv	x,st_no256
+0BE932 0D 22 00 00       			mv	y,st_no256_e-st_no256
+0BE936 04 C7 E6          		rel call	st_puts
+0BE939 08 31             			mv	a,'1'
+0BE93B 0C CB E4 0B       			rel mv	x,mpb128
+0BE93F 04 B7 E6          		rel call	cmd3f_set
+0BE942 12 3B             			jr	cmd3f_2
+0BE944 60 44             	cmd3f_d:	cmp	a,'D'
+0BE946 1A 11             			jrnz	cmd3f_i
+0BE948 04 C1 EB          		rel call	check_sect
+0BE94B 08 44             			mv	a,'D'
+0BE94D 04 26 EB          		rel call	send_one
+0BE950 0B 12 0F          			mv	i,$12+(receive_one_s-receive_one-2)*$100
+0BE953 AB 37 EB 0B       			rel mv	[receive_one],i		;jr receive_one_s
+0BE957 12 26             			jr	cmd3f_2
+0BE959 60 49             	cmd3f_i:	cmp	a,'I'
+0BE95B 1A 0D             			jrnz	cmd3f_x
+0BE95D 09 82             			mv	il,130					;"Je" commande
+0BE95F 08 00             			mv	a,0						;Envoyer 130 pieces de 00h
+0BE961                   	cmd3f_i1:
+0BE961 04 26 EB          		rel call	send_one
+0BE964 7C 01             			dec	il
+0BE966 1B 07             			jrnz	cmd3f_i1
+0BE968 12 15             			jr	cmd3f_2
+0BE96A                   	;	Ni 1/2/5, ni D/I/?/H (ajout 2026). Option vide (INIT "L:", et l'appel de
+0BE96A                   	;	l'installateur avec "L:",0) : comme la 1.62, vider le tampon. Lettre
+0BE96A                   	;	inconnue : la 1.62 videait aussi le tampon, sans rien dire ; on le dit,
+0BE96A                   	;	et on ne touche a rien.
+0BE96A 60 21             	cmd3f_x:	cmp	a,' '+1				;0, CR, 1Ah, espace... : option vide
+0BE96C 1C 11             			jrc	cmd3f_2
+0BE96E 60 FF             			cmp	a,$ff
+0BE970 18 0D             			jrz	cmd3f_2
+0BE972 0C A5 E5 0B       			rel mv	x,st_unk
+0BE976 0D 27 00 00       			mv	y,st_unk_e-st_unk
+0BE97A 04 C7 E6          		rel call	st_puts
+0BE97D 9F                			rc
+0BE97E 06                			ret
+0BE97F                   	cmd3f_2:
+0BE97F 04 75 EB          		rel call	buffer_clr
+0BE982                   			;bsr	root
+0BE982                   			;ret
+0BE982                   	
+0BE982                   	root:
+0BE982 04 8D E9          		rel call	getroot
+0BE985 B3 84 0A          			mv	[x+$a],i
+0BE988 B2 84 11          			mv	[x+$11],ba
+0BE98B 9F                			rc
+0BE98C 06                			ret
+0BE98D                   	
+0BE98D                   	getroot:
+0BE98D 04 96 E9          		rel call	getmpb
+0BE990 92 84 13          			mv	ba,[x+$13]
+0BE993 09 80             			mv	il,128
+0BE995 06                			ret
+0BE996                   	
+0BE996 0C CB E4 0B       	getmpb:		rel mv	x,mpb128
+0BE99A 9F                			rc
+0BE99B 06                			ret
+0BE99C                   	;----------------------------------------------------------------------
+0BE99C                   	;		Corps de chaque processus
+0BE99C                   	;----------------------------------------------------------------------
+0BE99C CC 06 00          	main:		mv	(flag),0		;Effacer le drapeau
+0BE99F FD 01             			mv	a,il				;Analyse de commande
+0BE9A1 60 10             			cmp	a,$10
+0BE9A3 1A 02             			jrnz	cmd11
+0BE9A5 9F                			rc						;Traitement de commande 10h
+0BE9A6 06                			ret
+0BE9A7 60 11             	cmd11:		cmp	a,$11
+0BE9A9 19 15             			jrz	getmpb				;Traitement de la commande 11h
+0BE9AB 60 12             			cmp	a,$12
+0BE9AD 18 6D             			jrz	read_sect			;Traitement de commande 12h
+0BE9AF 60 13             			cmp	a,$13
+0BE9B1 18 A4             			jrz	write_sect			;Traitement de la commande 13h
+0BE9B3 60 14             			cmp	a,$14
+0BE9B5 18 A0             			jrz	write_sect			;Traitement de la commande 14h
+0BE9B7 60 15             			cmp	a,$15
+0BE9B9 18 61             			jrz	read_sect			;Traitement de commande 15h
+0BE9BB 60 16             			cmp	a,$16
+0BE9BD 1A 05             			jrnz	cmd17
+0BE9BF 0A 00 00          			mv	ba,0				;Traitement de commande 16h
+0BE9C2 9F                			rc
+0BE9C3 06                			ret
+0BE9C4 60 17             	cmd17:		cmp	a,$17
+0BE9C6 1A 41             			jrnz	cmd18
+0BE9C8 8A 9A F1 0B       			rel mv	ba,[sect_number]	;Traitement de commande 17h
+0BE9CC 30                			pre	$30
+0BE9CD D6 02 D4          			cmpw	(bl),ba
+0BE9D0 18 2C             			jrz	same_sect				;c'etait le meme secteur que le tampon
+0BE9D2 04 C1 EB          		rel call	check_sect
+0BE9D5 65 06 02          			test	(flag),2
+0BE9D8 1A 2E             			jrnz	cmd17_err
+0BE9DA 30                			pre	$30
+0BE9DB 82 D4             			mv	ba,(bl)
+0BE9DD AA 9A F1 0B       			rel mv	[sect_number],ba
+0BE9E1 A2 02             			mv	(sect_num),ba
+0BE9E3 0C 60 EC 0B       			rel mv	x,sect_1
+0BE9E7 0D E2 EC 0B       			rel mv	y,sect_2		;Faire une copie
+0BE9EB 09 41             			mv	il,sectsiz/2+1
+0BE9ED 04 D4 EA          		rel call	rcv_sect
+0BE9F0 65 06 02          			test	(flag),2
+0BE9F3 18 09             			jrz	same_sect
+0BE9F5 0A FF FF          			mv	ba,-1
+0BE9F8 AA 9A F1 0B       			rel mv	[sect_number],ba
+0BE9FC 12 0A             			jr	cmd17_err
+0BE9FE 30                	same_sect:	pre	$30
+0BE9FF CD D6 80 00       			mvw	(cl),sectsiz
+0BEA03 0C 60 EC 0B       			rel mv	x,sect_1
+0BEA07 9F                			rc
+0BEA08 06                	cmd17_err:	ret
+0BEA09 60 18             	cmd18:		cmp	a,$18
+0BEA0B 19 80             			jrz	getroot				;Traitement de la commande $ 18 (pour DS)	
+0BEA0D 60 3F             	cmd3f:		cmp	a,$3f
+0BEA0F 1A 03             			jrnz	cmd40
+0BEA11 02 92 E8          			rel jp	init				;Traitement de la commande 3Fh (trop loin pour jrz depuis 2026)
+0BEA14 60 40             	cmd40:		cmp	a,$40
+0BEA16 19 96             			jrz	root				;Traitement de commande 40h
+0BEA18 08 03             	cmd_err:	mv	a,3				;Commande invalide
+0BEA1A 97                			sc
+0BEA1B 06                			ret
+0BEA1C                   	;----------------------------------------------------------------------
+0BEA1C                   	;		Lecture continue de secteurs
+0BEA1C                   	;----------------------------------------------------------------------
+0BEA1C 22                	read_sect:	pre	$22
+0BEA1D C9 02 D4          			mvw	(sect_num),(bl)
+0BEA20 FD 54             			mv	y,x
+0BEA22 09 40             			mv	il,sectsiz/2
+0BEA24 8A 9A F1 0B       			rel mv	ba,[sect_number]
+0BEA28 D6 02 02          			cmpw	(sect_num),ba    ;Secteurs tampons et
+0BEA2B 1A 0E             			jrnz	read_sect1	     ;Avez-vous frappe?
+0BEA2D 0D 60 EC 0B       			rel mv	y,sect_1
+0BEA31 92 25             	read_sect2:	mv	ba,[y++]
+0BEA33 B2 24             			mv	[x++],ba
+0BEA35 7C 01             			dec	il
+0BEA37 1B 08             			jrnz	read_sect2
+0BEA39 12 08             			jr	read_sect3
+0BEA3B                   	read_sect1:
+0BEA3B 04 D4 EA          		rel call	rcv_sect
+0BEA3E 65 06 02          			test	(flag),2
+0BEA41 1A 13             			jrnz	read_err
+0BEA43 30                	read_sect3:	pre	$30
+0BEA44 82 D4             			mv	ba,(bl)
+0BEA46 6C 02             			inc	ba
+0BEA48 30                			pre	$30
+0BEA49 A2 D4             			mv	(bl),ba
+0BEA4B 30                			pre	$30
+0BEA4C 82 D8             			mv	ba,(dl)
+0BEA4E 7C 02             			dec	ba
+0BEA50 30                			pre	$30
+0BEA51 A2 D8             			mv	(dl),ba
+0BEA53 1B 39             			jrnz	read_sect
+0BEA55 9F                			rc
+0BEA56 06                	read_err:	ret
+0BEA57                   	;----------------------------------------------------------------------
+0BEA57                   	;		Ecriture continue de secteurs
+0BEA57                   	;----------------------------------------------------------------------
+0BEA57 22                	write_sect:	pre	$22
+0BEA58 C9 02 D4          			mvw	(sect_num),(bl)
+0BEA5B 09 80             			mv	il,sectsiz
+0BEA5D 8A 9A F1 0B       			rel mv	ba,[sect_number]
+0BEA61 D6 02 02          			cmpw	(sect_num),ba    ;Secteurs tampons et
+0BEA64 1A 0E             			jrnz	write_sect1	     ;Avez-vous frappe?
+0BEA66 0D 60 EC 0B       			rel mv	y,sect_1
+0BEA6A 90 24             	write_sect2:	mv	a,[x++]
+0BEA6C B0 25             			mv	[y++],a
+0BEA6E 7C 01             			dec	il
+0BEA70 1B 08             			jrnz	write_sect2
+0BEA72 12 08             			jr	write_sect3
+0BEA74                   	write_sect1:
+0BEA74 04 90 EA          		rel call	send_sect
+0BEA77 65 06 02          			test	(flag),2
+0BEA7A 1A 13             			jrnz	write_err
+0BEA7C 30                	write_sect3:	pre	$30
+0BEA7D 82 D4             			mv	ba,(bl)
+0BEA7F 6C 02             			inc	ba
+0BEA81 30                			pre	$30
+0BEA82 A2 D4             			mv	(bl),ba
+0BEA84 30                			pre	$30
+0BEA85 82 D8             			mv	ba,(dl)
+0BEA87 7C 02             			dec	ba
+0BEA89 30                			pre	$30
+0BEA8A A2 D8             			mv	(dl),ba
+0BEA8C 1B 37             			jrnz	write_sect
+0BEA8E 9F                			rc
+0BEA8F 06                	write_err:	ret
+0BEA90                   	;----------------------------------------------------------------------
+0BEA90                   	;		Transmission a un secteur
+0BEA90                   	;----------------------------------------------------------------------
+0BEA90 29                	send_sect:	pushu	il
+0BEA91 04 17 EC          		rel call	send_cache
+0BEA94 39                			popu	il
+0BEA95 2F                			pushu	imr
+0BEA96 30                			pre	$30
+0BEA97 CC FB A0          			mv	(imr),$a0
+0BEA9A 85 0A             			mv	y,(cachep)
+0BEA9C 2D                			pushu	y
+0BEA9D 90 24             	send_sect_2:	mv	a,[x++]
+0BEA9F B0 25             			mv	[y++],a		;Ecrivez a CACHE
+0BEAA1 7C 01             			dec	il
+0BEAA3 1B 08             			jrnz	send_sect_2
+0BEAA5 08 57             			mv	a,'W'
+0BEAA7 04 26 EB          		rel call	send_one
+0BEAAA 80 02             			mv	a,(sect_num)
+0BEAAC 04 26 EB          		rel call	send_one
+0BEAAF 80 03             			mv	a,(sect_num+1)
+0BEAB1 04 26 EB          		rel call	send_one
+0BEAB4 3D                			popu	y
+0BEAB5 09 81             			mv	il,sectsiz+1
+0BEAB7 90 25             	send_sect_3:	mv	a,[y++]
+0BEAB9 04 26 EB          		rel call	send_one
+0BEABC 7C 01             			dec	il
+0BEABE 1B 09             			jrnz	send_sect_3
+0BEAC0 08 FF             			mv	a,$ff
+0BEAC2 04 26 EB          		rel call	send_one
+0BEAC5 04 37 EB          		rel call	receive_one
+0BEAC8 65 06 02          			test	(flag),2
+0BEACB 18 05             			jrz	send_ok
+0BEACD 0A FF FF          			mv	ba,-1
+0BEAD0 B2 05             			mv	[y],ba				;Invalider le cache mis en cache
+0BEAD2 3F                	send_ok:	popu	imr
+0BEAD3 06                			ret
+0BEAD4                   	;----------------------------------------------------------------------
+0BEAD4                   	;		Reception 1 secteur
+0BEAD4                   	;----------------------------------------------------------------------
+0BEAD4 2F                	rcv_sect:	pushu	imr
+0BEAD5 29                			pushu	il
+0BEAD6 30                			pre	$30
+0BEAD7 CC FB A0          			mv	(imr),$a0
+0BEADA 04 17 EC          		rel call	send_cache
+0BEADD 39                			popu	il
+0BEADE 1E 28             			jrnc	read_cache		;Sautez quand vous pouvez lire de CACHE
+0BEAE0 29                			pushu	il
+0BEAE1 2C                			pushu	x
+0BEAE2 84 0A             			mv	x,(cachep)			;Charger dans CACHE
+0BEAE4 08 52             			mv	a,'R'
+0BEAE6 04 26 EB          		rel call	send_one
+0BEAE9 80 02             			mv	a,(sect_num)
+0BEAEB 04 26 EB          		rel call	send_one
+0BEAEE 80 03             			mv	a,(sect_num+1)
+0BEAF0 04 26 EB          		rel call	send_one
+0BEAF3 9F                			rc
+0BEAF4 04 37 EB          		rel call	receive_one
+0BEAF7 1C 0D             			jrc	rcv_sect_2
+0BEAF9 B0 24             			mv	[x++],a
+0BEAFB 09 80             			mv	il,sectsiz
+0BEAFD                   	rcv_sect_1:
+0BEAFD 04 37 EB          		rel call	receive_one
+0BEB00 B0 24             			mv	[x++],a
+0BEB02 7C 01             			dec	il
+0BEB04 1B 09             			jrnz	rcv_sect_1
+0BEB06 3C                	rcv_sect_2:	popu	x
+0BEB07 39                			popu	il
+0BEB08 B6 37             	read_cache:	mv	[--s],u			;Lire de CACHE
+0BEB0A 86 0A             			mv	u,(cachep)
+0BEB0C 65 06 02          			test	(flag),2
+0BEB0F 18 08             			jrz	read_cache_1
+0BEB11 0A FF FF          			mv	ba,-1
+0BEB14 B2 86 81          			mv	[u+cache_sect],ba;Invalider le cache entrant
+0BEB17 12 09             			jr	rcv_err
+0BEB19 3A                	read_cache_1:	popu	ba		;mv	ba,[u++]
+0BEB1A B2 24             			mv	[x++],ba
+0BEB1C B2 25             			mv	[y++],ba
+0BEB1E 7C 01             			dec	il
+0BEB20 1B 09             			jrnz	read_cache_1
+0BEB22 96 27             	rcv_err:	mv	u,[s++]
+0BEB24 3F                			popu	imr
+0BEB25 06                			ret
+0BEB26                   	;----------------------------------------------------------------------
+0BEB26                   	;		Transmission sur 1 octet
+0BEB26                   	;----------------------------------------------------------------------
+0BEB26 30                	send_one:	pre	$30
+0BEB27 65 F8 08          			test	(usr),$8
+0BEB2A 19 06             			jrz	send_one			;Attendez qu'il soit pret pour Tx
+0BEB2C 65 06 02          			test	(flag),2
+0BEB2F 18 02             			jrz	send_one_2			;En mode d'arret de la transmission, 00h est transmis
+0BEB31 08 00             			mv	a,0
+0BEB33 30                	send_one_2:	pre	$30
+0BEB34 A0 FA             			mv	(txd),a		;Envoyer
+0BEB36 06                			ret
+0BEB37                   	;----------------------------------------------------------------------
+0BEB37                   	;		Recevez 1 octet
+0BEB37                   	;----------------------------------------------------------------------
+0BEB37 12 0F             	receive_one:	jr	receive_one_s
+0BEB39 FF 08             			db	ssr,8
+0BEB3B                   	;		test	(ssr),8
+0BEB3B 1A 1E             			jrnz	receive_one_err	;[BRK] a ete presse
+0BEB3D 65 06 01          			test	(flag),1
+0BEB40 19 0B             			jrz	receive_one			;Attendez qu'un octet soit recu
+0BEB42 80 07             			mv	a,(rxdata)
+0BEB44 71 06 FE          			and	(flag),$fe			;Reinitialiser le drapeau
+0BEB47 06                			ret
+0BEB48 0A 40 9C          	receive_one_s:	mv	ba,timeout
+0BEB4B 30                	receive_one_lp:	pre	$30			;1
+0BEB4C 65 FF 08          			test	(ssr),8	;4
+0BEB4F 1A 0A             			jrnz	receive_one_err		;2
+0BEB51 65 06 01          			test	(flag),1		;4
+0BEB54 1A 09             			jrnz	receive_one_ok		;2
+0BEB56 7C 02             			dec	ba			;3
+0BEB58 1B 0F             			jrnz	receive_one_lp		;3
+0BEB5A 97                			sc
+0BEB5B 79 06 02          	receive_one_err:or	(flag),2	;Definir le mode d'arret de la transmission
+0BEB5E 06                			ret
+0BEB5F 0A 30 65          	receive_one_ok:	mv	ba,$6530	;pre $30 test (m),n
+0BEB62 AA 37 EB 0B       			rel mv	[receive_one],ba
+0BEB66 80 07             			mv	a,(rxdata)
+0BEB68 71 06 FE          			and	(flag),$fe			;Reinitialiser le drapeau
+0BEB6B 06                			ret
+0BEB6C                   	;----------------------------------------------------------------------
+0BEB6C                   	;		Recevez une routine de traitement des interruptions
+0BEB6C                   	;----------------------------------------------------------------------
+0BEB6C 30                	rcv:		pre	$30
+0BEB6D 80 F9             			mv	a,(rxd)
+0BEB6F A0 07             			mv	(rxdata),a
+0BEB71 79 06 01          			or	(flag),1			;Definir le drapeau de reception complete
+0BEB74 07                			retf
+0BEB75                   	;----------------------------------------------------------------------
+0BEB75                   	;		Tampon clair
+0BEB75                   	;----------------------------------------------------------------------
+0BEB75 09 82             	buffer_clr:	mv	il,sectsiz+2
+0BEB77 0A 00 00          			mv	ba,0
+0BEB7A 0C 60 EC 0B       			rel mv	x,sect_1
+0BEB7E B2 24             	buffer_clr_1:	mv	[x++],ba	;Remplir le tampon avec 00h
+0BEB80 7C 03             			dec	i
+0BEB82 1B 06             			jrnz	buffer_clr_1
+0BEB84 0A FF FF          			mv	ba,-1
+0BEB87 AA 9A F1 0B       			rel mv	[sect_number],ba	;Initialisation du numero de secteur
+0BEB8B 09 07             			mv	il,n_fcache
+0BEB8D 0D 6A ED 0B       			rel mv	y,fcache
+0BEB91 AD 64 ED 0B       			rel mv	[fcachep],y
+0BEB95 04 A6 EB          		rel call	buffer_clr_3
+0BEB98 09 01             			mv	il,n_dcache
+0BEB9A 0D 14 F1 0B       			rel mv	y,dcache
+0BEB9E AD 67 ED 0B       			rel mv	[dcachep],y
+0BEBA2 04 A6 EB          		rel call	buffer_clr_3
+0BEBA5 06                			ret
+0BEBA6                   	
+0BEBA6 FD 45             	buffer_clr_3:	mv	x,y
+0BEBA8 B2 84 81          			mv	[x+cache_sect],ba
+0BEBAB 7C 01             			dec	il
+0BEBAD 18 0A             			jrz	buffer_clr_2
+0BEBAF 0A 86 00          			mv	ba,cache_size
+0BEBB2 45 52             			add	y,ba
+0BEBB4 B5 84 83          			mv	[x+cache_next],y
+0BEBB7 13 13             			jr	buffer_clr_3
+0BEBB9 0D FF FF 0F       	buffer_clr_2:	mv	y,$fffff
+0BEBBD B5 84 83          			mv	[x+cache_next],y
+0BEBC0 06                			ret
+0BEBC1                   	;----------------------------------------------------------------------
+0BEBC1                   	;		Verification de la correspondance du tampon pour la commande $ 17
+0BEBC1                   	;----------------------------------------------------------------------
+0BEBC1 0C 60 EC 0B       	check_sect:	rel mv	x,sect_1
+0BEBC5 09 81             			mv	il,sectsiz+1
+0BEBC7 E0 24 00          	check_sect_3:	mv	(i_work1),[x++]
+0BEBCA 90 84 81          			mv	a,[x+sectsiz+1]
+0BEBCD 63 00             			cmp	(i_work1),a			;Comparaison du contenu de la memoire tampon
+0BEBCF 1A 05             			jrnz	check_sect_4
+0BEBD1 7C 01             			dec	il
+0BEBD3 1B 0E             			jrnz	check_sect_3
+0BEBD5 06                			ret
+0BEBD6                   	check_sect_4:
+0BEBD6 D1 02 9A F1 0B    			rel mvw	(sect_num),[sect_number]
+0BEBDB 0C 60 EC 0B       			rel mv	x,sect_1
+0BEBDF 09 81             			mv	il,sectsiz+1
+0BEBE1 2C                			pushu	x
+0BEBE2 04 90 EA          		rel call	send_sect
+0BEBE5 3C                			popu	x
+0BEBE6 82 02             			mv	ba,(sect_num)
+0BEBE8 6C 02             			inc	ba
+0BEBEA A2 02             			mv	(sect_num),ba
+0BEBEC 7C 02             			dec	ba
+0BEBEE 7C 02             			dec	ba
+0BEBF0 A2 04             			mv	(sect_num2),ba
+0BEBF2 85 0A             			mv	y,(cachep)
+0BEBF4 92 85 81          	check_sect_6:	mv	ba,[y+cache_sect]
+0BEBF7 D6 02 02          			cmpw	(sect_num),ba
+0BEBFA 1A 07             			jrnz	check_sect_5
+0BEBFC 28                			pushu	a
+0BEBFD 90 84 80          			mv	a,[x+sectsiz]
+0BEC00 B0 05             			mv	[y],a				;Le premier octet du secteur a cote du secteur accede
+0BEC02 38                			popu	a
+0BEC03 D6 02 04          	check_sect_5:	cmpw	(sect_num2),ba
+0BEC06 1A 05             			jrnz	check_sect_7
+0BEC08 90 04             			mv	a,[x]
+0BEC0A B0 85 80          			mv	[y+sectsiz],a		;Le 129eme octet du secteur avant le secteur accede
+0BEC0D 95 85 83          	check_sect_7:	mv	y,[y+cache_next]
+0BEC10 2D                			pushu	y
+0BEC11 6C 05             			inc	y
+0BEC13 3D                			popu	y
+0BEC14 1B 22             			jrnz	check_sect_6
+0BEC16 06                			ret
+0BEC17                   	;----------------------------------------------------------------------
+0BEC17                   	;		Verification de la correspondance avec le cache
+0BEC17                   	;----------------------------------------------------------------------
+0BEC17                   	send_cache:
+0BEC17 2C                			pushu	x
+0BEC18 2D                			pushu	y
+0BEC19 0C 67 ED 0B       			rel mv	x,dcachep
+0BEC1D 0A 2C 00          	secpatch:	mv	ba,dtop			;Le numero du secteur principal de la zone DATA est ecrit
+0BEC20 D6 02 02          			cmpw	(sect_num),ba
+0BEC23 1E 04             			jrnc	send_cache_0
+0BEC25 0C 64 ED 0B       			rel mv	x,fcachep
+0BEC29 A4 0A             	send_cache_0:	mv	(cachep),x
+0BEC2B A4 10             			mv	(before),x
+0BEC2D 94 04             			mv	x,[x]
+0BEC2F 92 84 81          	send_cache_1:	mv	ba,[x+cache_sect]
+0BEC32 95 84 83          			mv	y,[x+cache_next]
+0BEC35 D6 02 02          			cmpw	(sect_num),ba
+0BEC38 18 11             			jrz	send_cache_2		;Le secteur auquel on a tente d'acceder est le meme que CACHE
+0BEC3A 2D                			pushu	y
+0BEC3B 6C 05             			inc	y
+0BEC3D 3D                			popu	y
+0BEC3E 97                			sc						;Marquez qu'il ne peut pas etre lu de CACHE
+0BEC3F 18 0A             			jrz	send_cache_2
+0BEC41 08 83             			mv	a,cache_next
+0BEC43 45 40             			add	x,a
+0BEC45 A4 10             			mv	(before),x
+0BEC47 FD 45             			mv	x,y
+0BEC49 13 1C             			jr	send_cache_1
+0BEC4B BD 00 10          	send_cache_2:	mv	[(before)],y
+0BEC4E 9D 00 0A          			mv	y,[(cachep)]
+0BEC51 B5 84 83          			mv	[x+cache_next],y
+0BEC54 E9 84 02 81       			mvw	[x+cache_sect],(sect_num)
+0BEC58 BC 00 0A          			mv	[(cachep)],x
+0BEC5B A4 0A             			mv	(cachep),x
+0BEC5D 3D                			popu	y
+0BEC5E 3C                			popu	x
+0BEC5F 06                			ret
+0BEC60                   	
+0BEC60                   	prgend:
+0BEC60                   	;----------------------------------------------------------------------
+0BEC60                   	;		Zone de travail
+0BEC60                   	;----------------------------------------------------------------------
+0BEC60                   	suborg		*
+0BEC60                   	byte		sect_1[sectsiz+1+1],sect_2[sectsiz+1+1]
+0BEC60                   	pntr		fcachep,dcachep
+0BEC60                   	byte		fcache[cache_size*n_fcache]
+0BEC60                   	byte		dcache[cache_size*n_dcache]
+0BEC60                   	word		sect_number
+0BEC60                   	
+0BEC60                   	blen:		equ	%-btop
+0BEC60                   	blen_162:	equ	2336		;Taille du bloc de PLINKC 1.62 d'origine ("Already exists" la distingue)
+0BEC60                   	
+0BEC60                   	;----------------------------------------------------------------------
+0BEC60                   	;		Verifications a l'assemblage
+0BEC60                   	;----------------------------------------------------------------------
+0BEC60                   			assert	entry = $be000,'entry hors de l''org : relocation faussee'
+0BEC60                   			assert	ihead-btop = $22,'en-tete IOCS hors de bloc+22h'
+0BEC60                   			assert	dvname-btop = $2a,'nom de device hors de bloc+2Ah (-U le cherche la)'
+0BEC60                   			assert	pg_m-mb < 256,'table mb au-dela de 256 octets (IL)'
+0BEC60                   			assert	blen < 10000,'blen sur plus de 4 chiffres : st_ver ne l''ecrit pas'
+0BEC60                   			assert	blen <> blen_162,'blen = blen_162 : ambigu pour -U et pour Already exists'
+0BEC60                   			end
 
  - Symbols -
 
-0BF3F2h  abs_e
-0BF3DBh  abs_m
+0BE3FBh  abs_e
+0BE3E4h  abs_m
 0000EFh  amc
 0BFCBCh  apo_time
 00000Ch  argu
-0BF02Dh  arg_end
-0BF008h  arg_lp
-0BF028h  arg_u
+0BE02Dh  arg_end
+0BE008h  arg_lp
+0BE028h  arg_u
 0000D1h  basptr
 0BFD0Eh  baswrk
+0BE77Ch  baud
+0BE78Ch  baud_1
+0BE798h  baud_2
+0BE7A9h  baud_3
 000010h  before
 0000D5h  bh
 0000D4h  bl
-000BC0h  blen
+000CFEh  blen
 000920h  blen_162
-0BF1D0h  bomb
+0BE1D9h  bomb
 000003h  bottom
 0000ECh  bp_ram
-0BF545h  brkloop
+0BE54Eh  brkloop
 0000EAh  brkmsk
-0BF1D1h  bsearch
-0BF495h  btop
-0BFA2Eh  buffer_clr
-0BFA37h  buffer_clr_1
-0BFA72h  buffer_clr_2
-0BFA5Fh  buffer_clr_3
+0BE1DAh  bsearch
+0BE49Eh  btop
+0BEB75h  buffer_clr
+0BEB7Eh  buffer_clr_1
+0BEBB9h  buffer_clr_2
+0BEBA6h  buffer_clr_3
 00000Ah  cachep
 000083h  cache_next
 000081h  cache_sect
 000086h  cache_size
 0000D7h  ch
-0BFA7Ah  check_sect
-0BFA80h  check_sect_3
-0BFA8Fh  check_sect_4
-0BFABCh  check_sect_5
-0BFAADh  check_sect_6
-0BFAC6h  check_sect_7
-0BF0F7h  chksize
+0BEBC1h  check_sect
+0BEBC7h  check_sect_3
+0BEBD6h  check_sect_4
+0BEC03h  check_sect_5
+0BEBF4h  check_sect_6
+0BEC0Dh  check_sect_7
+0BE0F7h  chksize
 0000D6h  cl
-0BF860h  cmd11
-0BF87Dh  cmd17
-0BF8C1h  cmd17_err
-0BF8C2h  cmd18
-0BF8C6h  cmd3f
-0BF785h  cmd3f_15
-0BF838h  cmd3f_2
-0BF7FDh  cmd3f_d
-0BF812h  cmd3f_i
-0BF81Ah  cmd3f_i1
-0BF7DEh  cmd3f_q0
-0BF7BCh  cmd3f_q1
-0BF642h  cmd3f_set
-0BF823h  cmd3f_x
-0BF8CDh  cmd40
-0BF8D1h  cmd_err
-0BF293h  compare
-0BF2A0h  compare_e
+0BE9A7h  cmd11
+0BE9C4h  cmd17
+0BEA08h  cmd17_err
+0BEA09h  cmd18
+0BEA0Dh  cmd3f
+0BE8CCh  cmd3f_15
+0BE97Fh  cmd3f_2
+0BE944h  cmd3f_d
+0BE959h  cmd3f_i
+0BE961h  cmd3f_i1
+0BE925h  cmd3f_q0
+0BE903h  cmd3f_q1
+0BE6B7h  cmd3f_set
+0BE96Ah  cmd3f_x
+0BEA14h  cmd40
+0BEA18h  cmd_err
+0BE29Ch  compare
+0BE2A9h  compare_e
 0BFC29h  ctrl_disp
 00004Fh  d0_box_fill
 000042h  d0_chars_out_at
@@ -1589,12 +1735,13 @@
 00004Fh  d9_tan
 000079h  d9_val
 0000CEh  datbas
-0BFFCDh  dcache
-0BFC20h  dcachep
+0BF114h  dcache
+0BED67h  dcachep
 0BFC7Dh  defdrv
+000078h  def_ucr
 000000h  dest
-0BF501h  devmain
-0BF4BAh  devno
+0BE50Ah  devmain
+0BE4C3h  devno
 000000h  dev_display
 000007h  dev_fdd
 000009h  dev_function
@@ -1610,29 +1757,30 @@
 0000D8h  dl
 0BFC96h  dotsop
 0E01C2h  drv_off
+0BE646h  drv_ucr
 00002Ch  dtop
-0BF4BFh  dvname
+0BE4C8h  dvname
 0BFCA2h  d_link
 0000F6h  eih
 0000F5h  eil
-0BF000h  entry
+0BE000h  entry
 0000F4h  eoh
 0000F3h  eol
-0BF352h  etat
-0BF44Fh  exi_m
-0BF3DBh  exl_e
-0BF3B8h  exl_m
-0BF377h  exo_e
-0BF356h  exo_m
-0BF3B8h  exu_e
-0BF377h  exu_m
-0BF07Bh  ex_autre
-0BF0ADh  ex_fin
-0BF0B3h  ex_libre
-0BF085h  ex_non_lie
-0BF09Ah  ex_sans_bloc
-0BFC23h  fcache
-0BFC1Dh  fcachep
+0BE35Bh  etat
+0BE458h  exi_m
+0BE3E4h  exl_e
+0BE3C1h  exl_m
+0BE380h  exo_e
+0BE35Fh  exo_m
+0BE3C1h  exu_e
+0BE380h  exu_m
+0BE07Bh  ex_autre
+0BE0ADh  ex_fin
+0BE0B3h  ex_libre
+0BE085h  ex_non_lie
+0BE09Ah  ex_sans_bloc
+0BED6Ah  fcache
+0BED64h  fcachep
 0FFFE4h  fcs_call
 000002h  fcs_close_file
 000000h  fcs_create_file
@@ -1651,7 +1799,7 @@
 000007h  fcs_verify_file
 000004h  fcs_write_block
 000006h  fcs_write_byte
-0BF19Bh  fin
+0BE1A4h  fin
 000006h  flag
 0BFC87h  font_00_1f
 0BFC90h  font_20_7f
@@ -1662,16 +1810,18 @@
 0BFC3Fh  funckey_flag
 0BFC46h  funckey_name
 0BFC45h  funckey_slot
-0BF84Fh  getmpb
-0BF846h  getroot
-0BF6D6h  help
-0BF1DBh  icall
-0BF4B7h  ihead
+0BE996h  getmpb
+0BE98Dh  getroot
+0BE80Ch  help
+0BE1E4h  icall
+0BE4C0h  ihead
 0000EBh  iisr
 0000FBh  imr
-0BF759h  init
-0BF765h  init_0
-0BF476h  ins_m
+0BE892h  init
+0BE89Eh  init_0
+0BE8ADh  init_1
+0BE8B4h  init_2
+0BE47Fh  ins_m
 0BFCD8h  intv_ext
 0BFCC6h  intv_ftimer
 0BFCCFh  intv_onkey
@@ -1721,7 +1871,7 @@
 000000h  i_work1
 000001h  i_work2
 000008h  i_work3
-0BF54Fh  jump00
+0BE558h  jump00
 0BFCC0h  keymtx_tbl
 0BFCBFh  keyrep
 0BFC2Dh  keytbl_1b
@@ -1762,52 +1912,54 @@
 0BFC9Eh  lcd_height
 0BFCA1h  lcd_mode
 0BFC9Dh  lcd_width
-0BF1B6h  linkbas
+0BE1BFh  linkbas
 0BFC2Ah  linprn
-0BF0DBh  loop1
-0BF0EAh  loop2
-0BF855h  main
-0BF44Fh  mb
+0BE0DBh  loop1
+0BE0EAh  loop2
+0BE7CDh  ltest
+0BE7FCh  ltest_n
+0BE99Ch  main
+0BE458h  mb
 000006h  mdf
-0BF1D7h  memd
-0BF1D3h  memd2
-0BF461h  mem_m
-0BF4C2h  mpb128
-0BF4ECh  mpb256
-0BF4D7h  mpb512
-0BF198h  msend
-0BF18Ch  msend2
+0BE1E0h  memd
+0BE1DCh  memd2
+0BE46Ah  mem_m
+0BE4CBh  mpb128
+0BE4F5h  mpb256
+0BE4E0h  mpb512
+0BE1A1h  msend
+0BE195h  msend2
 000001h  n_dcache
 000007h  n_fcache
 000009h  offset
-0BF417h  oth_e
-0BF3F2h  oth_m
-0BF483h  pg_m
-0BFB19h  prgend
-0BF1A1h  putm2
-0BF1ABh  puts
+0BE420h  oth_e
+0BE3FBh  oth_m
+0BE48Ch  pg_m
+0BEC60h  prgend
+0BE1AAh  putm2
+0BE1B4h  puts
 0000EDh  px
 0000EEh  py
-0BFA25h  rcv
-0BF9DBh  rcv_err
-0BF98Dh  rcv_sect
-0BF9B6h  rcv_sect_1
-0BF9BFh  rcv_sect_2
-0BF9C1h  read_cache
-0BF9D2h  read_cache_1
-0BF90Fh  read_err
-0BF8D5h  read_sect
-0BF8F4h  read_sect1
-0BF8EAh  read_sect2
-0BF8FCh  read_sect3
-0BF9F0h  receive_one
-0BFA14h  receive_one_err
-0BFA04h  receive_one_lp
-0BFA18h  receive_one_ok
-0BFA01h  receive_one_s
+0BEB6Ch  rcv
+0BEB22h  rcv_err
+0BEAD4h  rcv_sect
+0BEAFDh  rcv_sect_1
+0BEB06h  rcv_sect_2
+0BEB08h  read_cache
+0BEB19h  read_cache_1
+0BEA56h  read_err
+0BEA1Ch  read_sect
+0BEA3Bh  read_sect1
+0BEA31h  read_sect2
+0BEA43h  read_sect3
+0BEB37h  receive_one
+0BEB5Bh  receive_one_err
+0BEB4Bh  receive_one_lp
+0BEB5Fh  receive_one_ok
+0BEB48h  receive_one_s
 0BFCBBh  repeat_pitch
 0BFCBAh  repeat_wait
-0BF83Bh  root
+0BE982h  root
 0000F9h  rxd
 000007h  rxdata
 0BFCDEh  s1_btm
@@ -1818,29 +1970,29 @@
 0BFC0Fh  s2_top
 0BFC0Ch  s3_cap
 0BFC09h  s3_top
-0BF8B7h  same_sect
+0BE9FEh  same_sect
 0000FDh  scr
 0BFC27h  scrn_crsr_x
 0BFC28h  scrn_crsr_y
-0BFAD6h  secpatch
+0BEC1Dh  secpatch
 000080h  sectsiz
-0BFB19h  sect_1
-0BFB9Bh  sect_2
+0BEC60h  sect_1
+0BECE2h  sect_2
 000002h  sect_num
 000004h  sect_num2
-0C0053h  sect_number
+0BF19Ah  sect_number
 0FFFD8h  secure_work_call
-0BFAD0h  send_cache
-0BFAE2h  send_cache_0
-0BFAE8h  send_cache_1
-0BFB04h  send_cache_2
-0BF98Bh  send_ok
-0BF9DFh  send_one
-0BF9ECh  send_one_2
-0BF949h  send_sect
-0BF956h  send_sect_2
-0BF970h  send_sect_3
-0BF167h  short
+0BEC17h  send_cache
+0BEC29h  send_cache_0
+0BEC2Fh  send_cache_1
+0BEC4Bh  send_cache_2
+0BEAD2h  send_ok
+0BEB26h  send_one
+0BEB33h  send_one_2
+0BEA90h  send_sect
+0BEA9Dh  send_sect_2
+0BEAB7h  send_sect_3
+0BE167h  short
 0000DAh  si
 0BFD33h  sio_baud
 0BFD62h  sio_close_data
@@ -1856,88 +2008,102 @@
 0BFD39h  sio_tx_delay
 0BFD37h  sio_tx_port_cond
 0BFD38h  sio_tx_port_ctrl
-0BF352h  sk_e
-0BF324h  sk_m
+0BE35Bh  sk_e
+0BE32Dh  sk_m
 0BFCBEh  softint
 0000FFh  ssr
-0BF71Ah  status
-0BF561h  st_128
-0BF569h  st_256
-0BF565h  st_512
-0BF636h  st_blk
-0BF63Fh  st_blk_e
-0BF5E3h  st_cmd
-0BF62Dh  st_cmd_e
-0BF63Fh  st_crlf
-0BF65Dh  st_dec
-0BF62Dh  st_dev
-0BF636h  st_dev_e
-0BF671h  st_digit
-0BF673h  st_digit_1
-0BF67Dh  st_digit_2
-0BF688h  st_digit_3
-0BF6A4h  st_hex2
-0BF696h  st_hex5
-0BF55Eh  st_l
-0BF561h  st_l_e
-0BF641h  st_mode
-0BF6AAh  st_nib
-0BF56Dh  st_no256
-0BF58Fh  st_no256_e
-0BF6B6h  st_pmode
-0BF6C6h  st_pmode_0
-0BF6CEh  st_pmode_1
-0BF68Bh  st_putc
-0BF652h  st_puts
-0BF695h  st_ret
-0BF58Fh  st_srv
-0BF59Ch  st_srv_e
-0BF59Ch  st_unk
-0BF5C3h  st_unk_e
-0BF5C3h  st_ver
-0BF5E3h  st_ver_e
+0BE850h  status
+0BE56Ah  st_128
+0BE572h  st_256
+0BE56Eh  st_512
+0BE647h  st_bauds
+0BE63Eh  st_blk
+0BE646h  st_blk_e
+0BE655h  st_bnames
+0BE678h  st_bps
+0BE5ECh  st_cmd
+0BE639h  st_cmd_e
+0BE6B4h  st_crlf
+0BE6D2h  st_dec
+0BE639h  st_dev
+0BE63Eh  st_dev_e
+0BE6E6h  st_digit
+0BE6E8h  st_digit_1
+0BE6F2h  st_digit_2
+0BE6FDh  st_digit_3
+0BE719h  st_hex2
+0BE70Bh  st_hex5
+0BE567h  st_l
+0BE56Ah  st_l_e
+0BE6B6h  st_mode
+0BE71Fh  st_nib
+0BE576h  st_no256
+0BE598h  st_no256_e
+0BE74Bh  st_pbaud
+0BE765h  st_pbaud_1
+0BE76Dh  st_pbaud_2
+0BE72Bh  st_pmode
+0BE72Fh  st_pmodea
+0BE73Bh  st_pmode_0
+0BE743h  st_pmode_1
+0BE700h  st_putc
+0BE6C7h  st_puts
+0BE70Ah  st_ret
+0BE67Bh  st_sp
+0BE67Ch  st_spd
+0BE682h  st_spd_e
+0BE598h  st_srv
+0BE5A5h  st_srv_e
+0BE68Dh  st_tno
+0BE6B4h  st_tno_e
+0BE682h  st_tok
+0BE68Dh  st_tok_e
+0BE5A5h  st_unk
+0BE5CCh  st_unk_e
+0BE5CCh  st_ver
+0BE5ECh  st_ver_e
 000009h  subko
-0BF44Fh  sup2_e
-0BF438h  sup2_m
-0BF438h  sup_e
-0BF417h  sup_m
+0BE458h  sup2_e
+0BE441h  sup2_m
+0BE441h  sup_e
+0BE420h  sup_m
 0BFCE1h  swork
 009C40h  timeout
-0BF2A1h  title
-0BF305h  title_e
+0BE2AAh  title
+0BE30Eh  title_e
 0000FAh  txd
 0000CBh  txtbas
 0000F7h  ucr
-0BF1E0h  uninst
-0BF27Fh  un_absent
-0BF289h  un_autre
-0BF1E7h  un_blk
-0BF246h  un_delier
-0BF279h  un_fin
-0BF252h  un_lnk
-0BF271h  un_ok
-0BF212h  un_sup
-0BF26Bh  un_trouve
-0BF352h  uok_e
-0BF305h  uok_m
+0BE1E9h  uninst
+0BE288h  un_absent
+0BE292h  un_autre
+0BE1F0h  un_blk
+0BE24Fh  un_delier
+0BE282h  un_fin
+0BE25Bh  un_lnk
+0BE27Ah  un_ok
+0BE21Bh  un_sup
+0BE274h  un_trouve
+0BE35Bh  uok_e
+0BE30Eh  uok_m
 0000F8h  usr
 0BFD1Ah  usrwrk
 00000Dh  vct_rsv
-0BF15Dh  word
-0BF948h  write_err
-0BF910h  write_sect
-0BF92Dh  write_sect1
-0BF923h  write_sect2
-0BF935h  write_sect3
-0BF0C9h  _blk00001_e
-0BF0BFh  _blk00001_t
-0BF131h  _blk00002_e
-0BF12Ah  _blk00002_t
-0BF149h  _blk00003_e
-0BF142h  _blk00003_t
-0BF174h  _blk00004_e
-0BF150h  _blk00004_t
-0BF534h  _blk00005_e
-0BF52Eh  _blk00005_t
+0BE15Dh  word
+0BEA8Fh  write_err
+0BEA57h  write_sect
+0BEA74h  write_sect1
+0BEA6Ah  write_sect2
+0BEA7Ch  write_sect3
+0BE0C9h  _blk00001_e
+0BE0BFh  _blk00001_t
+0BE131h  _blk00002_e
+0BE12Ah  _blk00002_t
+0BE149h  _blk00003_e
+0BE142h  _blk00003_t
+0BE174h  _blk00004_e
+0BE150h  _blk00004_t
+0BE53Dh  _blk00005_e
+0BE537h  _blk00005_t
 
-  No fatal error.  Code: 0BF000h - 0BFB8Ch [     2957 byte(s)]
+  No fatal error.  Code: 0BE000h - 0BECF1h [     3314 byte(s)]

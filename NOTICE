@@ -86,9 +86,13 @@ This is a derivative of PLINKC 1.62 by Daisuke Mizobata (itself based on
 PLINK.SYS 1.04 by N.Kon), made from the author's source PLINKC.asm preserved
 in original/PLINKC-1.62-1999/. Changes, all to be assembled with xasm2026-4:
   - system constants taken from pce500.inc (generated include file);
-  - uninstallation by CALL &BF000 "-U", and detailed "already installed"
-    messages;
-  - INIT "L:?" (driver state), INIT "L:H" (help), unknown options reported;
+  - uninstallation by CALL &BE000 "-U", and detailed "already installed"
+    messages (the object now loads at 0BE000h: it outgrew 0BF000h-0BFC00h);
+  - INIT "L:?" (driver state), INIT "L:H" (help), INIT "L:T" (link test),
+    unknown options reported;
+  - a serial speed of its own (19200 bps by default, INIT "L:Bnnnnn"), so
+    that a RESET, which sets the BASIC COM: speed back to 1200 bps, no longer
+    breaks the link;
   - a 256K disk mode and the mode query 'Q' answered by APLINKS 1.07.
 The installer banner keeps Mizobata's and Kon's credit lines unaltered and
 adds one line for the update; the version reads "1.62-2026.1" so that the

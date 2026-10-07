@@ -2,7 +2,7 @@
 # Verifie la table de relocation du pilote modernise, et la reference d'origine.
 #
 # 1. reference/plinkc.a62.asm doit redonner reference/PLINKC.OBJ (l'objet de 1999).
-# 2. plinkc.asm est assemble a DEUX origines (0BF000h et 0BE000h). Chaque corps est
+# 2. plinkc.asm est assemble a DEUX origines (la sienne et 01000h plus bas). Chaque corps est
 #    reloge par SA table, exactement comme le fait l'installateur (boucle de deltas
 #    de Kon : bit 80h = champ de 3 octets, 7Eh = ecart long sur 2 octets, 0FFh = fin),
 #    vers plusieurs destinations. Les deux resultats doivent etre identiques a l'octet :
@@ -18,18 +18,18 @@ ICI = os.path.dirname(os.path.abspath(__file__))
 # xasm2026-4 : 1er argument, sinon variable XASM2026_4, sinon le PATH.
 # https://github.com/jfalbouy/XASM2026_CSharp
 XASM = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("XASM2026_4", "xasm2026-4")
-AUTRE_ORG = 0xBE000
+DECALAGE = 0x1000          # la 2e origine d'assemblage est 01000h plus bas
 DESTINATIONS = (0x80018, 0x80938, 0x9F000, 0xAFF00)
 
 def assembler(src, tmp, org=None):
-    """Assemble src dans tmp (avec son pce500.inc) ; org : une autre origine que 0BF000h.
+    """Assemble src dans tmp (avec son pce500.inc) ; org : une autre origine que la sienne.
     Rend (objet, btop, prgend, entry, origine)."""
     texte = open(src, encoding="latin-1").read()
     nom = os.path.splitext(os.path.basename(src))[0]
     if org is not None:
-        texte, n = re.subn(r"^(\s+org\s+)\$bf000", r"\g<1>$%x" % org, texte, count=1, flags=re.M)
+        texte, n = re.subn(r"^(\s+org\s+)\$[0-9a-fA-F]+", r"\g<1>$%x" % org, texte, count=1, flags=re.M)
         if n != 1:
-            sys.exit(f"{src} : 'org $bf000' introuvable")
+            sys.exit(f"{src} : ligne 'org' introuvable")
         # le seul assert qui porte sur une adresse absolue
         texte = re.sub(r"^\s*assert\s+entry\s*=.*$", "", texte, flags=re.M)
         nom += "_%x" % org
@@ -70,16 +70,29 @@ def reloger(obj, btop, prgend, entry, org, dest):
 with tempfile.TemporaryDirectory() as tmp:
     ref = assembler(os.path.join(ICI, "reference", "plinkc.a62.asm"), tmp)
     new = assembler(os.path.join(ICI, "plinkc.asm"), tmp)
-    alt = assembler(os.path.join(ICI, "plinkc.asm"), tmp, org=AUTRE_ORG)
+    alt = assembler(os.path.join(ICI, "plinkc.asm"), tmp, org=new[4] - DECALAGE)
 
 ok = ref[0] == open(os.path.join(ICI, "reference", "PLINKC.OBJ"), "rb").read()
 print(f"reference -> PLINKC.OBJ d'origine : {'identique' if ok else 'DIFFERENT'}")
+
+# L'objet entier (installateur, corps, table de relocation) doit tenir sous le
+# plafond 0BFC00h de la zone langage machine : au-dela, LOADM ecrase la zone
+# systeme (s1_top 0BFC15h, d_link 0BFCA2h...). La table est ajoutee apres END :
+# aucun assert de la source ne peut le verifier, d'ou ce controle ici.
+PLAFOND = 0xBFC00
+taille = int.from_bytes(new[0][5:8], "little")     # en-tete XASM : longueur en 05h-07h,
+debut = int.from_bytes(new[0][8:11], "little")     # adresse de chargement en 08h-0Ah
+fin = debut + taille
+sous = fin <= PLAFOND
+ok &= sous
+print(f"objet {debut:05X}h-{fin - 1:05X}h ({taille} o) : "
+      f"{'sous le plafond 0BFC00h' if sous else 'DEPASSE LE PLAFOND 0BFC00h de %d o' % (fin - PLAFOND)}")
 for dest in DESTINATIONS:
     a, sa = reloger(*new, dest)
     b, sb = reloger(*alt, dest)
     same = a == b and sa == sb
     ok &= same
-    print(f"corps reloge en {dest:05X}h depuis 0BF000h et {AUTRE_ORG:05X}h : "
+    print(f"corps reloge en {dest:05X}h depuis {new[4]:05X}h et {alt[4]:05X}h : "
           f"{len(a)} octets, {sa} sites -> {'identique' if same else 'DIFFERENT'}")
 a, sa = reloger(*new, DESTINATIONS[0])
 r, sr = reloger(*ref, DESTINATIONS[0])
