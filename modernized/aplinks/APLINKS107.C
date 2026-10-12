@@ -125,6 +125,11 @@ int	g_uuencode     = 0;        /* --uuencode: at startup, encode disk .obj -> .u
 long	g_baud         = 0;        /* line speed, for the theoretical times of -v    */
 double	g_t_prev_end   = -1;       /* -v timing: end of the previous command (ms)    */
 double	g_t_prev_r     = -1;       /* -v timing: arrival of the previous 'R' (ms)    */
+/* 1.07 stale-cache guard: system sectors (FAT + directory) the pocket has read
+   from THIS disk since it was last emptied.  A write to one it never read can
+   only come from its cache of an earlier disk (see the 'W' case). */
+unsigned char g_sys_read[MAX_SYSBUF / 128];
+int	g_stale_writes = 0;        /* stale writes refused since the disk was emptied */
 const char *g_capture  = NULL;     /* --capture: record raw text instead of serving L: */
 FILE   *g_capture_fd   = NULL;     /* the capture file currently open (NULL if none)   */
 
@@ -320,6 +325,7 @@ int main(int argc, char *argv[])
 		    sector = (sector_low & 0xff) + (sector_high & 0xff) * 256;
 		    if ( ! g_verbose ) printf( "\rR" );
 		    g_conn_reads++;  sread( sector );
+		    if ( sector >= 0 && sector < g_data_start ) g_sys_read[ sector ] = 1;
 		    for( i = 0; i <= 128 ; i++ ) {
 			put_com( buffer[ i ] );
 		    }
@@ -349,6 +355,32 @@ int main(int argc, char *argv[])
 			fflush(stdout);
 		    } else printf( "\rW" );
 		    if ( (buffer[129] & 0xff) == 0xff ) {
+			/* 1.07: refuse a stale FAT/directory sector.  The driver
+			   keeps one write-back sector and flushes it before the
+			   'S' of INIT "L:x" (check_sect).  After an aborted
+			   session (server stopped by Ctrl-C, no INIT "L:D"), that
+			   sector belongs to the OLD disk; written into a new one
+			   it adds dead directory entries (export2.log, 2026-10-12:
+			   sector 52 before any read).  The pocket only writes a
+			   FAT or directory sector after reading it (no format
+			   command on L:), so one never read since this disk was
+			   emptied is stale.  It is still acknowledged, or the
+			   driver would wait for the reply.  Data sectors are not
+			   checked: a new file may write them without reading. */
+			if ( sector >= 0 && sector < g_data_start && ! g_sys_read[ sector ] ) {
+			    put_com( 0 );
+			    if ( ++g_stale_writes == 1 ) {
+				printf( "\nWarning: the pocket wrote %s sector %d, which it never read from this disk:\n"
+					"  stale cache from an earlier session, ignored.  Do INIT \"L:%c\" on the pocket\n"
+					"  before using L: (or INIT \"L:D\" at the end of each session).\n" ,
+					sector < g_dir_top / 128 ? "FAT" : "directory" , sector , g_mode );
+			    }
+			    if ( g_verbose ) vlog( "[!] stale %s sector %d (never read from this disk) ignored\n" ,
+						   sector < g_dir_top / 128 ? "FAT" : "directory" , sector );
+			    hist_add( "Stale %s sector %d from an earlier session ignored" ,
+				      sector < g_dir_top / 128 ? "FAT" : "directory" , sector );
+			    break;
+			}
 			g_conn_writes++;  swrite( sector );
 			put_com( 0 );
 		    }
@@ -942,6 +974,8 @@ static void reset_disk(void)
 	system_buffer[i] = 0;
     }
     system_buffer[0] = (char)0xf0;
+    memset( g_sys_read , 0 , sizeof g_sys_read );
+    g_stale_writes  = 0;
     current_dir     = g_dir_top;
     last_fat_number = 2;
     g_loaded        = 0;

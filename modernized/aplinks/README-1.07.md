@@ -121,6 +121,64 @@ noté dans l'historique. La 1.06 le prenait pour 128K. Aucun pilote n'envoie aut
 1.62 envoie `'1'` ou `'5'`, et le pilote 2026 y ajoute `'2'`. Les `D`, `R` et `W`, eux, ne
 peuvent pas être filtrés.
 
+### Le cache périmé du pilote après une session interrompue
+
+Le pilote garde **un secteur en écriture différée**. Il l'envoie au serveur avant le `'S'` de
+chaque `INIT "L:x"`, et avant le `'D'` de `INIT "L:D"`.
+
+Si la session précédente n'a pas fini par `INIT "L:D"` (APLINKS arrêté par Ctrl-C, câble
+débranché…), ce secteur appartient à **l'ancien disque**. À l'`INIT` suivant, face à un APLINKS
+relancé, il est recopié tel quel sur le nouveau disque. C'est le `W 52` en tête d'`export2.log`.
+Il y ajoutait des entrées de répertoire mortes. Au vidage, une telle entrée produit un fichier
+vide ou tronqué, et peut écraser un vrai fichier du même nom dans le dossier.
+
+**Protection côté serveur, depuis la 1.07 :**
+- **La règle.** Le pocket n'écrit jamais un secteur de FAT ou de répertoire sans l'avoir lu :
+  `L:` n'a pas de commande de formatage. APLINKS note donc les secteurs système lus depuis que
+  le disque a été vidé, au lancement ou après un `INIT "L:D"`.
+- **Le refus.** Une écriture vers un secteur système jamais lu est refusée. Elle est quand même
+  acquittée, sinon le pilote attendrait la réponse.
+- **Les traces.** Un avertissement s'affiche une fois et invite à faire `INIT "L:x"` sur le
+  pocket. Chaque refus est inscrit au journal `-v` (`[!] stale directory sector 52 ... ignored`)
+  et dans l'historique.
+- **Les secteurs de données ne sont pas contrôlés.** Un nouveau fichier peut les écrire sans les
+  lire, et ils ne sont atteints qu'à travers la FAT et le répertoire.
+
+Elle fonctionne avec tous les pilotes, la 1.62 d'origine comme le pilote 2026. Le protocole n'est
+pas modifié.
+
+Vérifié hors ligne, sans port série : un banc de test rejoue la séquence d'`export2.log` à travers
+la boucle réelle du serveur.
+
+| Version | Le `W 52` périmé | Fichiers écrits au vidage |
+|---|---|---|
+| 1.07 | refusé | `LBASIC.TXT` seul |
+| version précédente, sans protection | accepté | `LBASIC.TXT` plus un `OLDFILE.TXT` vide, avec un avertissement de chaîne cassée |
+
+Dans les deux versions, la session normale et l'écriture différée légitime d'un second `INIT`,
+dans la même session, restent acceptées.
+
+**Vérifié sur le PC-E500 (2026-10-12, 512K, 19200 bps).**
+- `stale.log` : un export vers `L:` sans `INIT "L:D"`, puis APLINKS arrêté par Ctrl-C.
+- `stale2.log` : APLINKS relancé. Le `W 48` hérité de la session précédente arrive avant le
+  `[S]` et il est refusé (`[!] stale directory sector 48 ... ignored`). Le nouvel export est
+  ensuite enregistré normalement : `LBASIC2.TXT`, 5 309 octets. Le `LBASIC.TXT` d'un essai
+  antérieur, que l'entrée périmée aurait pu écraser, est intact.
+
+La bonne pratique reste de **terminer chaque session par `INIT "L:D"`** et de faire `INIT "L:x"`
+avant d'utiliser `L:` face à un APLINKS relancé.
+
+`INIT` est une commande de mode direct. Un programme peut quand même la faire exécuter : il la
+fait taper par `KEY 0`, qui dépose une ligne dans le tampon clavier (32 octets au plus), puis
+s'arrête par `END`. Il reprend ensuite par un `GOTO`, qui garde les variables. Par exemple :
+
+```basic
+KEY 0,"INIT "+CHR$ 34+"L:D"+CHR$ 34+":GOTO 1420"+CHR$ 13:END
+```
+
+C'est ce que fait LBASIC après un export sur `L:`. Vérifié sur le PC-E500 le 2026-10-12
+(`flush.log`) : `LBASIC.TXT` est écrit sur le PC, puis le programme reprend.
+
 ### Vérifié sur le PC-E500 (2026-10-12, 512K, 19200 bps)
 
 Programme `LBASIC.BAS` (`C:\Claude\ROUTINES\LBASIC`), rapport de 171 lignes :
