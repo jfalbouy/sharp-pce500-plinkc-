@@ -33,6 +33,8 @@
         on the wire (96%); an ASCII LOAD at ~517 ms/sector, the Sharp's BASIC
         tokenizer being the bottleneck.  Sending a sector in one write call
         instead of 129 changed nothing, so it was not kept.
+        --capture f (2026-10-12): L: is not served; the text the pocket
+        sends to COM: is recorded in f, one file per 1Ah-ended transmission.
       - file paths use PATH_MAX-sized buffers (no 8.3 truncation)
       - fopen()/Win32/termios failures are checked, not assumed
       - hidden/system files are skipped like the original _A_NORMAL
@@ -123,6 +125,8 @@ int	g_uuencode     = 0;        /* --uuencode: at startup, encode disk .obj -> .u
 long	g_baud         = 0;        /* line speed, for the theoretical times of -v    */
 double	g_t_prev_end   = -1;       /* -v timing: end of the previous command (ms)    */
 double	g_t_prev_r     = -1;       /* -v timing: arrival of the previous 'R' (ms)    */
+const char *g_capture  = NULL;     /* --capture: record raw text instead of serving L: */
+FILE   *g_capture_fd   = NULL;     /* the capture file currently open (NULL if none)   */
 
 /* Session history: a timestamped log of high-level actions (start, preload,
    per-connection read/write counts, files saved, disconnects).  Shown on
@@ -161,6 +165,7 @@ static int  uuencode_file(const char *inpath, const char *outpath, const char *o
 static void uuencode_disk(void);
 static void make_ext_path(const char *in, char *out, size_t outsz, const char *newext);
 static int  ends_with_ci(const char *s, const char *suffix);
+static void capture_loop(const char *port, long baud);
 void append_char(char *, char);
 int  open_serial(const char *port, long baud);
 unsigned char get_com(void);
@@ -224,6 +229,8 @@ int main(int argc, char *argv[])
 	    g_uudecode = 0;
 	} else if ( strcmp( argv[argn] , "--uuencode" ) == 0 ) {
 	    g_uuencode = 1;
+	} else if ( strcmp( argv[argn] , "--capture" ) == 0 && argn + 1 < argc ) {
+	    g_capture = argv[++argn];
 	} else if ( strcmp( argv[argn] , "-h" ) == 0 || strcmp( argv[argn] , "--help" ) == 0 ) {
 	    usage( argv[0] );
 	    return( 0 );
@@ -233,6 +240,10 @@ int main(int argc, char *argv[])
 	    return( 1 );
 	}
 	argn++;
+    }
+
+    if ( g_capture != NULL ) {
+	capture_loop( port , baud );     /* never returns: no L: disk in this mode */
     }
 
     set_geometry( start_mode );
@@ -345,13 +356,26 @@ int main(int argc, char *argv[])
 		case 'S':
 		    /* Size negotiation sent by the driver at INIT: 'S' then
 		       '1' (128K), '2' (256K) or '5' (512K).  Auto-switch an
-		       empty disk.  Any other byte means 128K, as in 1.06.
+		       empty disk.  Any other byte is ignored (1.07).
 		       No reply, exactly as in 1.06: an older driver does not
 		       expect one, and a stray byte would desynchronise it.  The
 		       2026 driver asks for the mode actually in use with 'Q'. */
 		    {
 			unsigned char sz = get_com();
-			int want = ( sz == '5' || sz == '2' ) ? sz : '1';
+			int want = sz;
+			/* 1.07: any other byte after 'S' is refused.  1.06 took
+			   it for 128K, yet no driver sends one (1.62: '1' or '5';
+			   the 2026 driver: '1', '2' or '5').  Text sent to COM:
+			   while L: is served (the "LBASIC" of a report: 'S' then
+			   'I') switched the disk to 128K and lost the file being
+			   written (export6.log, 2026-10-12). */
+			if ( sz != '1' && sz != '2' && sz != '5' ) {
+			    if ( g_verbose ) {
+				vlog( "[?] 'S' followed by 0x%02x, not a size: ignored\n" , sz );
+			    }
+			    hist_add( "'S' followed by 0x%02x, not a size: ignored (text sent to COM:?)" , sz );
+			    break;
+			}
 			if ( g_verbose ) {
 			    vlog( "[S] INIT handshake: '%c' -> %s mode\n" ,
 				sz , mode_name( want ) );
@@ -422,6 +446,8 @@ void usage(const char *prog)
 	"  --no-uudecode disable auto-decoding of flushed .uue/.uux to .obj\n"
 	"  --uuencode    at startup, encode the disk folder's .obj files to .uue\n"
 	"                (Sharp format, per-line checksums) so the pocket can FILES/LOAD them\n"
+	"  --capture f   do NOT serve L:; record in 'f' the text the pocket sends to COM:\n"
+	"                (one file per transmission, ended by 1Ah: f, then f-2, f-3...)\n"
 	"  file ...  specific host files to preload (instead of the whole folder)\n" ,
 	prog , DEFAULT_PORT , DEFAULT_BAUD );
 }
@@ -556,6 +582,11 @@ static void on_sigint(int sig)
     printf( "\n" );
     if ( g_conn_reads || g_conn_writes ) {
 	hist_add( "Interrupted mid-session: %d read(s), %d write(s)" , g_conn_reads , g_conn_writes );
+    }
+    if ( g_capture_fd != NULL ) {
+	fclose( g_capture_fd );          /* keep what was received so far */
+	g_capture_fd = NULL;
+	hist_add( "Stopped (Ctrl-C) - capture closed before its 1Ah" );
     }
     hist_add( "Stopped (Ctrl-C) - unsaved changes discarded" );
     print_free_space();
@@ -1000,11 +1031,12 @@ static void write_diagnostic(const char *file, int cluster, const char *why)
 }
 
 void epilogue(int keep_serving)
-/* Flush pocket-created files (dir attribute 0x20) to the disk folder.  With
+/* Flush pocket-created files (any attribute but 21h, preloaded) to the disk folder.  With
    keep_serving, empty and reload the disk and return to keep the port open for
    the next connection; otherwise exit. */
 {
 	    int	    i, j, fat_number, current_dir, condition;
+	    int	    noname = 0;         /* files with no name met so far */
 	    char    filename[256];
 	    char    outpath[PATH_BUF];
 	    long    file_size, saved_size;
@@ -1016,7 +1048,23 @@ void epilogue(int keep_serving)
 	    }
 	    current_dir = g_dir_top;
 	    while ( current_dir < g_sysbufsize ) {
-		if ( ( system_buffer[ current_dir ] != 0 ) && ( (system_buffer[ current_dir ] & 0xff) != 0xe5 ) && ( system_buffer[ current_dir + 0x0b ] == 0x20 ) ) {
+		/* Pocket-written files have attribute 20h (SAVE and OPEN ...
+		   FOR OUTPUT alike); preloaded ones are marked 21h by take_file
+		   and are not written back.  1.07: -v lists every entry. */
+		unsigned char a0   = (unsigned char)system_buffer[ current_dir ];
+		unsigned char attr = (unsigned char)system_buffer[ current_dir + 0x0b ];
+		int pocket_file = a0 != 0 && a0 != 0xe5 && attr == 0x20;
+		if ( g_verbose && a0 != 0 ) {
+		    vlog( "[D] dir '%.8s.%.3s' attr %02X start %d size %ld -> %s\n" ,
+			  system_buffer + current_dir , system_buffer + current_dir + 8 , attr ,
+			  ( system_buffer[ current_dir + 0x1a ] & 0xff ) | ( ( system_buffer[ current_dir + 0x1b ] & 0xff ) << 8 ) ,
+			  ( system_buffer[ current_dir + 0x1c ] & 0xffL )
+			  | ( ( system_buffer[ current_dir + 0x1d ] & 0xffL ) << 8 )
+			  | ( ( system_buffer[ current_dir + 0x1e ] & 0xffL ) << 16 ) ,
+			  a0 == 0xe5 ? "deleted" : pocket_file ? "flush" :
+			  attr == 0x21 ? "preloaded, kept" : "skipped" );
+		}
+		if ( pocket_file ) {
 		    strcpy( filename , "" );
 		    for( i = 0 ; i <= 7 ; i++ ) {
 			if ( system_buffer[ current_dir + i ] != ' ' ) {
@@ -1033,6 +1081,24 @@ void epilogue(int keep_serving)
 			    break;
 			}
 		    }
+		    /* 1.07: a file with no name.  OPEN "L:" FOR OUTPUT (the
+		       device alone, as for COM:) creates one, all spaces;
+		       1.06 tried to open "." and skipped it, so the LBASIC
+		       export of 2026-10-12 was lost.  It is now saved as
+		       NONAME.TXT (its own extension kept if it has one),
+		       NONAME2, NONAME3... for the next ones. */
+		    if ( filename[0] == '.' ) {
+			char ext[4];
+			snprintf( ext , sizeof ext , "%.3s" , filename + 1 );
+			if ( ++noname == 1 ) {
+			    snprintf( filename , sizeof filename , "NONAME.%s" , ext[0] ? ext : "TXT" );
+			} else {
+			    snprintf( filename , sizeof filename , "NONAME%d.%s" , noname , ext[0] ? ext : "TXT" );
+			}
+			printf( "Pocket file with no name (OPEN \"L:\" without a file name): saved as \"%s\".\n" , filename );
+			hist_add( "File with no name saved as \"%s\"" , filename );
+			if ( g_verbose ) vlog( "[D] no name -> \"%s\"\n" , filename );
+		    }
 
 		    file_size = system_buffer[ current_dir + 0x1c ] & 0xff;
 		    file_size += ( system_buffer[ current_dir + 0x1d ] & 0xff ) * 0x100L;
@@ -1042,6 +1108,7 @@ void epilogue(int keep_serving)
 		    disk_path( filename , outpath , sizeof outpath );
 		    if ( ( source_fd = fopen( outpath , "wb" ) ) == NULL ) {
 			printf("Can\'t open \"%s\". Skip this file\n" , outpath );
+			hist_add( "Can't open \"%s\": file skipped" , outpath );
 		    } else {
 			printf( "Writing \"%s\" ... ", outpath );
 			condition = 0;
@@ -1149,6 +1216,133 @@ void epilogue(int keep_serving)
 	    hist_add( "Stopped (Ctrl-D) - files saved" );
 	    hist_print();
 	    exit(0);
+}
+
+/*======================================================================
+	--capture : record what the pocket sends to COM:
+
+	On the pocket, OPEN "COM:" FOR OUTPUT / PRINT # / CLOSE sends the
+	text itself on the serial line, not sectors: L: is not involved.
+	Served as L: commands, its letters would be taken for R/W/S/Q/D
+	(the 'D' of a word flushes and resets the disk), so this mode is
+	exclusive, chosen at startup.  The bytes are written as received
+	(CR LF with the "L" field of the pocket's OPEN); 1Ah, sent by CLOSE
+	with the &1A end code, closes the file and is not written.  The
+	next transmission goes to f-2, f-3...  Nothing is sent back.
+======================================================================*/
+
+static void capture_path(int n, char *out, size_t outsz)
+/* n = 1: the --capture name as given; n > 1: "-n" inserted before the
+   extension (LBASIC.TXT -> LBASIC-2.TXT). */
+{
+    const char *dot    = strrchr( g_capture , '.' );
+    const char *slash  = strrchr( g_capture , '/' );
+    const char *bslash = strrchr( g_capture , '\\' );
+
+    if ( slash == NULL || ( bslash != NULL && bslash > slash ) ) slash = bslash;
+    if ( dot == NULL || ( slash != NULL && dot < slash ) ) dot = g_capture + strlen( g_capture );
+    if ( n == 1 ) {
+	snprintf( out , outsz , "%s" , g_capture );
+    } else {
+	snprintf( out , outsz , "%.*s-%d%s" , (int)( dot - g_capture ) , g_capture , n , dot );
+    }
+}
+
+static void capture_close(const char *path, long bytes, long lines, const char *why)
+{
+    fclose( g_capture_fd );
+    g_capture_fd = NULL;
+    printf( "\nCaptured \"%s\": %ld bytes, %ld line(s)%s.\n" , path , bytes , lines , why );
+    hist_add( "Captured \"%s\" (%ld bytes, %ld lines)%s" , path , bytes , lines , why );
+    if ( g_logfile ) {
+	fprintf( g_logfile , "\n[C] \"%s\": %ld bytes, %ld line(s)%s\n" , path , bytes , lines , why );
+	fflush( g_logfile );
+    }
+}
+
+static void capture_loop(const char *port, long baud)
+{
+    char    path[PATH_BUF];
+    int	    n = 0;
+    long    bytes = 0, lines = 0;
+    time_t  last_beat = 0;
+
+    if ( open_serial( port , baud ) != 0 ) {
+	fprintf( stderr , "\nCan\'t open serial port %s\n" , port );
+	exit( 1 );
+    }
+    printf( "\nCapture mode on %s (%ld bps), RTS=%s DTR=%s: L: is NOT served.\n" ,
+	    port , baud , g_rts ? "ON" : "OFF" , g_dtr ? "ON" : "OFF" );
+    printf( "Pocket: OPEN \"%ld,N,8,1,A,L,&1A,N,N\":CLOSE , then OPEN \"COM:\" FOR OUTPUT AS #1 ,\n"
+	    "PRINT #1,... and CLOSE #1 (its 1Ah closes the file).\n" , baud );
+    printf( "Press 'h' for the session history; Ctrl-D to close the file and quit, Ctrl-C to quit.\n" );
+    hist_add( "Started: capture mode, %s @ %ld bps, file \"%s\"" , port , baud , g_capture );
+    if ( g_logfile ) {
+	fprintf( g_logfile , "[C] capture mode, %s @ %ld bps, file \"%s\"\n" , port , baud , g_capture );
+	fflush( g_logfile );
+    }
+
+    for (;;) {
+	unsigned char c;
+
+	while ( ! serial_data_ready() ) {
+	    int key = poll_console();
+	    if ( key == 0x04 ) {                    /* Ctrl-D: close + quit */
+		if ( g_capture_fd != NULL ) {
+		    capture_close( path , bytes , lines , " (no 1Ah: closed by Ctrl-D)" );
+		}
+		hist_add( "Stopped (Ctrl-D)" );
+		hist_print();
+		exit( 0 );
+	    } else if ( key == 'h' || key == 'H' ) {
+		hist_print();
+	    }
+	    if ( g_verbose && g_capture_fd == NULL ) {
+		time_t now = time( NULL );
+		if ( now - last_beat >= 2 ) {
+		    putchar( '.' );
+		    fflush( stdout );
+		    last_beat = now;
+		}
+	    }
+	}
+	c = get_com();
+	if ( c == 0x1a ) {
+	    if ( g_capture_fd != NULL ) {
+		capture_close( path , bytes , lines , "" );
+	    } else if ( g_verbose ) {
+		vlog( "\n[C] 1Ah with no text before it: nothing written\n" );
+	    }
+	    continue;
+	}
+	if ( g_capture_fd == NULL ) {
+	    capture_path( ++n , path , sizeof path );
+	    if ( ( g_capture_fd = fopen( path , "wb" ) ) == NULL ) {
+		fprintf( stderr , "\nCan\'t create \"%s\"\n" , path );
+		exit( 1 );
+	    }
+	    bytes = lines = 0;
+	    printf( "\nReceiving into \"%s\"...\n" , path );
+	    if ( g_logfile ) fprintf( g_logfile , "[C] receiving into \"%s\"\n" , path );
+	}
+	fputc( c , g_capture_fd );
+	bytes++;
+	if ( c == '\n' ) lines++;
+	if ( g_verbose ) {
+	    /* Echo the text as it comes: CR dropped, other control bytes in hex. */
+	    if ( c == '\n' || ( c >= 0x20 && c < 0x7f ) ) {
+		putchar( c );
+		if ( g_logfile ) fputc( c , g_logfile );
+	    } else if ( c != '\r' ) {
+		printf( "<%02X>" , c );
+		if ( g_logfile ) fprintf( g_logfile , "<%02X>" , c );
+	    }
+	    fflush( stdout );
+	} else if ( c == '\n' ) {
+	    printf( "\r%ld line(s)" , lines );
+	    fflush( stdout );
+	}
+    }
 }
 
 /*======================================================================

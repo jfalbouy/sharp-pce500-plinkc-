@@ -112,7 +112,7 @@ modernized/
 │   ├── build.ps1 / build_c17.ps1 / Makefile
 │   ├── README.md             full usage & troubleshooting guide (French)
 │   └── APLINKS107.C, aplinks32_107.exe, build_107.ps1, README-1.07.md
-│                             1.07: 256K mode + 'Q' (separate source, 1.06 untouched)
+│                             1.07: 256K mode + 'Q', --capture COM: (1.06 untouched)
 └── plinkc/                   ← 2026 derivative: the updated PLINKC driver
     ├── plinkc.asm            source (A62 dialect, assembled by xasm2026-4)
     ├── PLINKC.OBJ, plinkc.uu object + self-decoding BASIC loader
@@ -199,6 +199,17 @@ and adds:
 servers simply ignore `'Q'`, and the 1999 driver never sends it, so every
 combination keeps working in 128K/512K. 1.07 also refuses out-of-disk sectors and
 checks FAT chains at disconnect, two cases where 1.06 crashed.
+
+1.07 also has **two modes**, one per session:
+- **Disk mode `L:`** (default) serves the virtual disk, for `SAVE`, `LOAD` and
+  `OPEN "L:NAME.EXT" FOR OUTPUT`. Files reach the PC at `INIT "L:D"`. A file
+  opened as plain `"L:"` has no name; it is saved as `NONAME.TXT`.
+- **Capture mode `COM:`** (`--capture FILE`) does not serve `L:`. It records the
+  text the pocket sends with `OPEN "COM:" FOR OUTPUT`, one file per transmission,
+  each ended by `1Ah`.
+
+Never mix the two in one session: text sent to `COM:` would be read as PLINK
+commands.
 
 ```
 # PC:
