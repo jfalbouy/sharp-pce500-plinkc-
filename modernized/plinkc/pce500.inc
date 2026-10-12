@@ -5,7 +5,7 @@
 ; GENERE automatiquement par xasm2026-4/tools/generate_pce500_inc.py a partir des tables
 ; du desassembleur SC62015Disassembler (Data/*.json), source autoritative alignee
 ; sur le listing de reference. NE PAS EDITER A LA MAIN : regenerer depuis les tables.
-; Genere le 2026-09-27.
+; Genere le 2026-10-12.
 ;
 ; Usage :   include pce500.inc
 ;
@@ -87,7 +87,8 @@ keytbl_1b_shift:  equ 0BFC33H ; pointeur table conversion clavier SHIFT, code 1 
 keytbl_2b_shift:  equ 0BFC36H ; pointeur table conversion clavier SHIFT, code 2 octets (3 o)
 keytbl_1b_ctrl:   equ 0BFC39H ; pointeur table conversion clavier CTRL, code 1 octet (3 o)
 keytbl_2b_ctrl:   equ 0BFC3CH ; pointeur table conversion clavier CTRL, code 2 octets (3 o)
-funckey_flag:     equ 0BFC3FH ; bit 2 = affichage des touches de fonction interdit
+funckey_flag:     equ 0BFC3FH ; drapeaux de la barre des touches de fonction. bit 2 = affichage INTERDIT (la commande 046h du pilote clavier refuse, retenue armee) ; bit 0 = la barre EST affichee -- pose apres l'IOCS 058h, efface quand la ligne 3 ...
+funckey_mode:     equ 0BFC40H ; selecteur du jeu de libelles des touches de fonction, et style de la barre. fkey_display (0F1CFAh) en fait deux usages : une valeur < 1 fait passer 013h a 0F6402h qui va chercher les libelles, sinon 033h ; et la ME ...
 key_hook1:        equ 0BFC41H ; hook de la routine de traitement clavier (3 o)
 funckey_slot:     equ 0BFC45H ; numero de slot portant le fichier FUNCKEY (0 = S1:)
 funckey_name:     equ 0BFC46H ; nom du fichier portant les touches de fonction (BFC46-BFC51)
