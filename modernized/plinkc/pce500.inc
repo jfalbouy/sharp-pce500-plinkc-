@@ -72,10 +72,13 @@ lcd2_data:        equ 0A00AH  ; HD61202 IC-5, ecriture d'un octet dans la RAM d'
 lcd2_read:        equ 0A00BH  ; HD61202 IC-5, lecture d'un octet de la RAM d'affichage
 s3_top:           equ 0BFC09H ; lead address du slot 2 = lecteur S3: (3 octets ; manuel technique, Parameter of memory block device)
 s3_cap:           equ 0BFC0CH ; capacite du slot 2 (S3:) en blocs de 2 Ko (2 octets ; manuel technique, Parameter of memory block device)
+s3_flags:         equ 0BFC0EH ; drapeaux du media du slot 2 (S3:, la ROM). La table des lecteurs est reguliere : TROIS ENTREES DE SIX OCTETS, tete (3) + capacite (2) + cet octet de drapeaux, pris a l'offset +05h de l'en-tete du media. Releve le 2 ...
 s2_top:           equ 0BFC0FH ; lead address du slot 1 = lecteur S2:, 040000h sur PC-E500S (3 octets ; manuel technique, Parameter of memory block device)
 s2_cap:           equ 0BFC12H ; capacite du slot 1 (S2:) en blocs de 2 Ko (2 octets ; manuel technique, Parameter of memory block device)
+s2_flags:         equ 0BFC14H ; drapeaux du media du slot 1 (S2:, la carte memoire) -- le carnet du referentiel le nomme ctrlCRAM, « carte inseree ». La table des lecteurs est reguliere : TROIS ENTREES DE SIX OCTETS, tete (3) + capacite (2) + cet ...
 s1_top:           equ 0BFC15H ; top of S1 (nom et libelle de REGISTER.ASM) ; lead address du slot 0 = lecteur S1:, 080000h sur PC-E500S (3 octets ; manuel technique, Parameter of memory block device)
 s1_cap:           equ 0BFC18H ; capacite du slot 0 (S1:) en blocs de 2 Ko (2 octets ; manuel technique, Parameter of memory block device)
+s1_flags:         equ 0BFC1AH ; drapeaux du media du slot 0 (S1:, la RAM interne). La table des lecteurs est reguliere : TROIS ENTREES DE SIX OCTETS, tete (3) + capacite (2) + cet octet de drapeaux, pris a l'offset +05h de l'en-tete du media. Rel ...
 s1_tail:          equ 0BFC1BH ; fin de la chaine des blocs de S1: + 1 (3 octets) : ecrite par SUB_F029D (commandes 42h/45h/46h/47h/48h du device 6), comparee a s1_btm par la reservation (0E0571h) ; nom de E. Kako (EXTSLOT, 1991). Un installateur ...
 scrn_crsr_x:      equ 0BFC27H ; X du curseur du peripherique stdo:/scrn:
 scrn_crsr_y:      equ 0BFC28H ; Y du curseur du peripherique stdo:/scrn:
